@@ -10,6 +10,7 @@ export class TabManager {
     this.tabs = new Map(); // id -> { term?, fitAddon?, termEl, tabEl, label, type, dashboard? }
     this.activeTabId = null;
     this.nextId = 1;
+    this.unreadCounts = new Map(); // id -> number
   }
 
   createTab(label = 'Session', options = {}) {
@@ -170,6 +171,7 @@ export class TabManager {
     }
 
     this.activeTabId = id;
+    this.clearBadge(id);
 
     if (tab.type === 'terminal' && tab.fitAddon) {
       tab.fitAddon.fit();
@@ -227,6 +229,35 @@ export class TabManager {
     if (!tab) return;
     tab.label = label;
     tab.tabEl.querySelector('.tab-label').textContent = label;
+  }
+
+  incrementBadge(id) {
+    if (id === this.activeTabId) return; // don't badge active tab
+    const count = (this.unreadCounts.get(id) || 0) + 1;
+    this.unreadCounts.set(id, count);
+    this._renderBadge(id);
+  }
+
+  clearBadge(id) {
+    this.unreadCounts.delete(id);
+    this._renderBadge(id);
+  }
+
+  _renderBadge(id) {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    const labelEl = tab.tabEl.querySelector('.tab-label');
+    // Remove existing badge
+    const existing = tab.tabEl.querySelector('.tab-badge');
+    if (existing) existing.remove();
+
+    const count = this.unreadCounts.get(id) || 0;
+    if (count > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'tab-badge';
+      badge.textContent = count > 9 ? '9+' : count;
+      labelEl.after(badge);
+    }
   }
 
   getDashboard() {
