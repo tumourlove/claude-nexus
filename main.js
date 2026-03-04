@@ -5,6 +5,7 @@ const { IpcServer } = require('./src/ipc-server');
 const { Scratchpad } = require('./src/scratchpad');
 const { HistoryManager } = require('./src/history-manager');
 const { ConflictDetector } = require('./src/conflict-detector');
+const { NotificationManager } = require('./src/notification-manager');
 
 let mainWindow;
 let sessionManager;
@@ -12,6 +13,7 @@ let ipcServer;
 let scratchpad;
 let historyManager;
 let conflictDetector;
+let notificationManager;
 let tabCounter = 0;
 
 function createWindow() {
@@ -31,6 +33,7 @@ function createWindow() {
   scratchpad = new Scratchpad();
   historyManager = new HistoryManager();
   conflictDetector = new ConflictDetector();
+  notificationManager = new NotificationManager(mainWindow);
 
   // Capture terminal output for history
   sessionManager.onOutput = (id, data) => {

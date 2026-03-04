@@ -60,6 +60,21 @@ window.nexus.onSpawnRequested(({ id, label, cwd, initialPrompt, template }) => {
 // Create first tab as lead session
 tabManager.createTab('Lead', { isLead: true });
 
+// Toast notifications
+const toastContainer = document.getElementById('toast-container');
+window.nexus.onToast(({ title, body, type }) => {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<strong>${title}</strong><span>${body}</span>`;
+  toastContainer.appendChild(toast);
+  // Trigger animation
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    toast.addEventListener('transitionend', () => toast.remove());
+  }, 4000);
+});
+
 // Update session count
 function updateStatusBar() {
   const count = tabManager.tabs.size;
