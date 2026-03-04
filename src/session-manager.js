@@ -73,14 +73,29 @@ class SessionManager {
       mcpConfigPath,
       worktree: worktreeInfo,
       createdAt: Date.now(),
+      lastOutputAt: Date.now(),
     };
 
     ptyProc.onData((data) => {
       this.mainWindow.webContents.send(`terminal:data:${id}`, data);
       if (this.onOutput) this.onOutput(id, data);
+
+      // Track activity for status detection
+      session.lastOutputAt = Date.now();
+
+      // Detect idle state (prompt character visible)
+      if (data.includes('\u276f') || data.includes('❯')) {
+        this.updateStatus(id, 'idle');
+      } else if (session.status === 'idle') {
+        this.updateStatus(id, 'working');
+      }
+
+      // Push preview lines to dashboard
+      this._emitPreview(id, data);
     });
 
     ptyProc.onExit(({ exitCode }) => {
+      this.updateStatus(id, exitCode === 0 ? 'done' : 'error');
       this.mainWindow.webContents.send('session:exited', { id, exitCode });
       this._cleanup(id);
     });
@@ -136,6 +151,27 @@ class SessionManager {
     if (session) {
       session.status = status;
       this.mainWindow.webContents.send('session:status', { id, status });
+    }
+  }
+
+  _emitPreview(id, data) {
+    // Strip ANSI codes for clean preview text
+    const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
+    const session = this.sessions.get(id);
+    if (!session) return;
+    if (!session._previewBuffer) session._previewBuffer = '';
+    session._previewBuffer += clean;
+    // Keep only last ~500 chars
+    if (session._previewBuffer.length > 500) {
+      session._previewBuffer = session._previewBuffer.slice(-500);
+    }
+    // Debounce: only send every 500ms
+    if (!session._previewTimer) {
+      session._previewTimer = setTimeout(() => {
+        session._previewTimer = null;
+        const lines = session._previewBuffer.split('\n').filter(l => l.trim()).slice(-5);
+        this.mainWindow.webContents.send('session:output-preview', { id, lines });
+      }, 500);
     }
   }
 
