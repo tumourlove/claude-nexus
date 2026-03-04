@@ -11,6 +11,36 @@ document.querySelector('.tab-add').addEventListener('click', () => {
   tabManager.createTab('Session');
 });
 
+// Help dropdown
+const helpBtn = document.getElementById('help-btn');
+const helpDropdown = document.getElementById('help-dropdown');
+
+function toggleHelp() {
+  const open = helpDropdown.style.display === 'none';
+  helpDropdown.style.display = open ? 'block' : 'none';
+  helpBtn.classList.toggle('active', open);
+}
+
+helpBtn.addEventListener('click', toggleHelp);
+
+// Close dropdown when clicking outside
+document.addEventListener('mousedown', (e) => {
+  if (helpDropdown.style.display !== 'none' && !helpDropdown.contains(e.target) && e.target !== helpBtn) {
+    helpDropdown.style.display = 'none';
+    helpBtn.classList.remove('active');
+  }
+});
+
+// Doc links open in default browser
+document.getElementById('help-docs-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.nexus.openExternal('https://github.com/tumourlove/claude-nexus');
+});
+document.getElementById('help-issues-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.nexus.openExternal('https://github.com/tumourlove/claude-nexus/issues');
+});
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === 't') {
@@ -56,6 +86,16 @@ document.addEventListener('keydown', (e) => {
     const ids = [...tabManager.tabs.keys()];
     const idx = parseInt(e.key) - 1;
     if (idx < ids.length) tabManager.activateTab(ids[idx]);
+  }
+  // F1 or ? toggle help (only if not typing in terminal)
+  if (e.key === 'F1') {
+    e.preventDefault();
+    toggleHelp();
+  }
+  // Escape closes help
+  if (e.key === 'Escape' && helpDropdown.style.display !== 'none') {
+    helpDropdown.style.display = 'none';
+    helpBtn.classList.remove('active');
   }
 });
 

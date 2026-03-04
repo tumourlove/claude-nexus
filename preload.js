@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, clipboard, nativeImage } = require('electron');
+const { contextBridge, ipcRenderer, clipboard, nativeImage, shell } = require('electron');
 
 contextBridge.exposeInMainWorld('nexus', {
   // Clipboard
@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('nexus', {
   clipboardWriteText: (text) => clipboard.writeText(text),
   clipboardHasImage: () => !clipboard.readImage().isEmpty(),
   saveClipboardImage: () => ipcRenderer.invoke('clipboard:save-image'),
+  openExternal: (url) => shell.openExternal(url),
 
   createSession: (id, label, options = {}) =>
     ipcRenderer.send('session:create', { id, label, ...options }),

@@ -72,25 +72,24 @@ export class TabManager {
     term.loadAddon(fitAddon);
     term.open(termEl);
 
-    // Clipboard shortcuts: Ctrl+C (copy/SIGINT), Ctrl+V (paste), Ctrl+X (copy+clear)
+    // Custom key handling: clipboard, newlines, QoL
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
 
-      // Ctrl+C: copy if selection exists, otherwise let terminal send SIGINT
-      if (e.ctrlKey && e.key === 'c') {
+      // Ctrl+C: copy if selection exists, otherwise send SIGINT
+      if (e.ctrlKey && !e.shiftKey && e.key === 'c') {
         const sel = term.getSelection();
         if (sel) {
           window.nexus.clipboardWriteText(sel);
           term.clearSelection();
-          return false; // prevent terminal from sending \x03
+          return false;
         }
-        return true; // no selection → send SIGINT
+        return true; // no selection → SIGINT
       }
 
-      // Ctrl+V: paste text or image from clipboard
+      // Ctrl+V: paste text or image
       if (e.ctrlKey && e.key === 'v') {
         (async () => {
-          // Check for image first
           if (window.nexus.clipboardHasImage()) {
             const imgPath = await window.nexus.saveClipboardImage();
             if (imgPath) {
@@ -98,23 +97,37 @@ export class TabManager {
               return;
             }
           }
-          // Otherwise paste text
           const text = window.nexus.clipboardReadText();
-          if (text) {
-            // Bracket paste so multi-line text is handled correctly
-            window.nexus.terminalWrite(id, text);
-          }
+          if (text) window.nexus.terminalWrite(id, text);
         })();
         return false;
       }
 
-      // Ctrl+X: copy selection then clear it
+      // Ctrl+X: copy selection and clear
       if (e.ctrlKey && e.key === 'x') {
         const sel = term.getSelection();
         if (sel) {
           window.nexus.clipboardWriteText(sel);
           term.clearSelection();
         }
+        return false;
+      }
+
+      // Ctrl+A: select all terminal content
+      if (e.ctrlKey && e.key === 'a') {
+        term.selectAll();
+        return false;
+      }
+
+      // Ctrl+L: clear terminal scrollback
+      if (e.ctrlKey && e.key === 'l') {
+        term.clear();
+        return false;
+      }
+
+      // Shift+Enter: send newline to Claude Code (for multi-line input)
+      if (e.shiftKey && e.key === 'Enter') {
+        window.nexus.terminalWrite(id, '\n');
         return false;
       }
 

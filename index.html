@@ -9,6 +9,44 @@
 <body>
   <div id="tab-bar">
     <div class="tab-add" title="New tab (Ctrl+T)">+</div>
+    <div class="tab-bar-spacer"></div>
+    <div id="help-btn" title="Help &amp; Shortcuts (?)">?</div>
+  </div>
+  <div id="help-dropdown" style="display:none">
+    <div class="help-header">Keyboard Shortcuts</div>
+    <div class="help-section">
+      <div class="help-section-title">Tabs</div>
+      <div class="help-row"><span class="help-desc">New session</span><kbd>Ctrl+T</kbd></div>
+      <div class="help-row"><span class="help-desc">Close tab</span><kbd>Ctrl+W</kbd></div>
+      <div class="help-row"><span class="help-desc">Next tab</span><kbd>Ctrl+Tab</kbd></div>
+      <div class="help-row"><span class="help-desc">Previous tab</span><kbd>Ctrl+Shift+Tab</kbd></div>
+      <div class="help-row"><span class="help-desc">Jump to tab 1-9</span><kbd>Ctrl+1</kbd> &ndash; <kbd>9</kbd></div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">Panels</div>
+      <div class="help-row"><span class="help-desc">Dashboard</span><kbd>Ctrl+D</kbd></div>
+      <div class="help-row"><span class="help-desc">History</span><kbd>Ctrl+H</kbd></div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">Editing</div>
+      <div class="help-row"><span class="help-desc">Copy selection</span><kbd>Ctrl+C</kbd></div>
+      <div class="help-row"><span class="help-desc">Paste text / image</span><kbd>Ctrl+V</kbd></div>
+      <div class="help-row"><span class="help-desc">Cut selection</span><kbd>Ctrl+X</kbd></div>
+      <div class="help-row"><span class="help-desc">Select all</span><kbd>Ctrl+A</kbd></div>
+      <div class="help-row"><span class="help-desc">New line (multi-line input)</span><kbd>Shift+Enter</kbd></div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">Terminal</div>
+      <div class="help-row"><span class="help-desc">Interrupt (SIGINT)</span><kbd>Ctrl+C</kbd><span class="help-note">no selection</span></div>
+      <div class="help-row"><span class="help-desc">Clear scrollback</span><kbd>Ctrl+L</kbd></div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">App</div>
+      <div class="help-row"><span class="help-desc">Show this help</span><kbd>F1</kbd></div>
+    </div>
+    <div class="help-divider"></div>
+    <a id="help-docs-link" class="help-row help-link" href="#">Documentation &amp; README</a>
+    <a id="help-issues-link" class="help-row help-link" href="#">Report an Issue</a>
   </div>
   <div id="terminal-container"></div>
   <div id="status-bar">
