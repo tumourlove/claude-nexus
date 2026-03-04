@@ -201,8 +201,28 @@ class IpcServer {
       }
 
       case 'reset_session': {
-        // Save history, then tell session manager to respawn
+        // Save history, then kill and respawn the session
         this.historyManager.saveToFile(msg.sessionId, 'pre-reset');
+        const sessionInfo = this.sessionManager.getSessionInfo(msg.sessionId);
+        if (sessionInfo) {
+          // Build a summary prompt if requested
+          let respawnPrompt = sessionInfo.initialPrompt || '';
+          if (msg.preserveSummary && respawnPrompt) {
+            respawnPrompt = `[RESET] Continuing previous task. Original prompt: ${respawnPrompt}`;
+          }
+          // Kill the old session
+          this.sessionManager.closeSession(msg.sessionId);
+          // Respawn via the spawn request flow (creates new tab + session)
+          if (this.onSpawnRequest) {
+            this.onSpawnRequest({
+              cwd: sessionInfo.cwd,
+              initialPrompt: respawnPrompt,
+              label: sessionInfo.label + ' (reset)',
+              template: sessionInfo.template,
+              requestedBy: currentSessionId,
+            });
+          }
+        }
         break;
       }
 
