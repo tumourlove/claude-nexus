@@ -48,7 +48,12 @@ class SessionManager {
       cols: 80,
       rows: 30,
       cwd: resolvedCwd,
-      env: { ...process.env },
+      env: (() => {
+        const env = { ...process.env };
+        // Remove nesting detection so Claude Code doesn't refuse to launch
+        delete env.CLAUDECODE;
+        return env;
+      })(),
       useConpty: true,
     });
 
