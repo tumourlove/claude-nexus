@@ -114,3 +114,41 @@ function updateStatusBar() {
   document.getElementById('session-count').textContent = `${count} session${count !== 1 ? 's' : ''}`;
 }
 setInterval(updateStatusBar, 1000);
+
+// --- Auto-updater UI ---
+const updateEl = document.getElementById('update-status');
+const versionEl = document.getElementById('app-version');
+
+window.nexus.getVersion().then(v => {
+  versionEl.textContent = `v${v}`;
+});
+
+window.nexus.onUpdateAvailable(({ version }) => {
+  updateEl.className = 'update-available';
+  updateEl.textContent = `Update v${version} available`;
+  updateEl.title = 'Click to download';
+  updateEl.onclick = () => {
+    updateEl.textContent = 'Downloading...';
+    updateEl.onclick = null;
+    window.nexus.downloadUpdate();
+  };
+});
+
+window.nexus.onUpdateUpToDate(() => {
+  updateEl.textContent = '';
+});
+
+window.nexus.onUpdateProgress(({ percent }) => {
+  updateEl.textContent = `Downloading... ${percent}%`;
+});
+
+window.nexus.onUpdateReady(() => {
+  updateEl.className = 'update-ready';
+  updateEl.textContent = 'Update ready — click to restart';
+  updateEl.title = 'Restart and install update';
+  updateEl.onclick = () => window.nexus.installUpdate();
+});
+
+window.nexus.onUpdateError(() => {
+  updateEl.textContent = '';
+});

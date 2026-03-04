@@ -1,14 +1,20 @@
 appId: com.claude-nexus.app
 productName: Claude Nexus
 directories:
-  output: dist
+  output: release
+  buildResources: build
 files:
   - "**/*"
   - "!docs/**"
   - "!scripts/**"
+  - "!release/**"
 extraResources:
   - from: scripts/
     to: scripts/
+publish:
+  provider: github
+  owner: tumourlove
+  repo: claude-nexus
 win:
   target: [nsis, portable]
 nsis:

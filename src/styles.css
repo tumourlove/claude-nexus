@@ -419,6 +419,7 @@ html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; f
 #status-bar {
   display: flex;
   align-items: center;
+  gap: 12px;
   padding: 0 12px;
   height: 24px;
   background: #16213e;
@@ -426,3 +427,18 @@ html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; f
   font-size: 11px;
   border-top: 1px solid #0f3460;
 }
+
+#app-version { opacity: 0.6; }
+
+#update-status { margin-left: auto; }
+#update-status.update-available {
+  color: #4fc3f7;
+  cursor: pointer;
+}
+#update-status.update-available:hover { text-decoration: underline; }
+#update-status.update-ready {
+  color: #66bb6a;
+  cursor: pointer;
+  font-weight: 600;
+}
+#update-status.update-ready:hover { text-decoration: underline; }

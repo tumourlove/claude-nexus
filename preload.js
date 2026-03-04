@@ -22,4 +22,15 @@ contextBridge.exposeInMainWorld('nexus', {
   browseForFolder: () => ipcRenderer.invoke('dialog:open-folder'),
   getStartupCwd: () => ipcRenderer.invoke('app:startup-cwd'),
   listSessions: () => ipcRenderer.invoke('session:list'),
+
+  // Auto-updater
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+  getVersion: () => ipcRenderer.invoke('updater:get-version'),
+  onUpdateAvailable: (cb) => ipcRenderer.on('updater:available', (_e, d) => cb(d)),
+  onUpdateUpToDate: (cb) => ipcRenderer.on('updater:up-to-date', () => cb()),
+  onUpdateProgress: (cb) => ipcRenderer.on('updater:progress', (_e, d) => cb(d)),
+  onUpdateReady: (cb) => ipcRenderer.on('updater:ready', () => cb()),
+  onUpdateError: (cb) => ipcRenderer.on('updater:error', (_e, d) => cb(d)),
 });

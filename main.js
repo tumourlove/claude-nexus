@@ -16,6 +16,7 @@ const { Scratchpad } = require('./src/scratchpad');
 const { HistoryManager } = require('./src/history-manager');
 const { ConflictDetector } = require('./src/conflict-detector');
 const { NotificationManager } = require('./src/notification-manager');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let sessionManager;
@@ -115,7 +116,51 @@ ipcMain.handle('clipboard:save-image', async () => {
   return filePath;
 });
 
-app.whenReady().then(createWindow);
+// --- Auto-updater ---
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow.webContents.send('updater:available', {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    mainWindow.webContents.send('updater:up-to-date');
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow.webContents.send('updater:progress', {
+      percent: Math.round(progress.percent),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    mainWindow.webContents.send('updater:ready');
+  });
+
+  autoUpdater.on('error', (err) => {
+    mainWindow.webContents.send('updater:error', { message: err.message });
+  });
+
+  // Check for updates after a short delay
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 5000);
+}
+
+ipcMain.handle('updater:check', () => autoUpdater.checkForUpdates().catch(() => null));
+ipcMain.handle('updater:download', () => autoUpdater.downloadUpdate().catch(() => null));
+ipcMain.handle('updater:install', () => autoUpdater.quitAndInstall());
+ipcMain.handle('updater:get-version', () => app.getVersion());
+
+app.whenReady().then(() => {
+  createWindow();
+  setupAutoUpdater();
+});
 app.on('window-all-closed', () => {
   if (ipcServer) ipcServer.stop();
   if (sessionManager) sessionManager.destroy();
