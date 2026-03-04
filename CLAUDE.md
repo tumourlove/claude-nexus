@@ -52,8 +52,8 @@ claude-nexus/
 - `Ctrl+W` — Close current tab
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` — Cycle tabs
 - `Ctrl+1-9` — Jump to tab by number
-- `Ctrl+D` — Toggle dashboard
-- `Ctrl+H` — Toggle history panel
+- `Ctrl+Shift+D` — Toggle dashboard
+- `Ctrl+Shift+H` — Toggle history panel
 
 ## Key Design Decisions
 

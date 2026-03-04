@@ -60,8 +60,8 @@ document.addEventListener('keydown', (e) => {
       : (idx + 1) % ids.length;
     tabManager.activateTab(ids[next]);
   }
-  // Ctrl+D toggle dashboard
-  if (e.ctrlKey && e.key === 'd') {
+  // Ctrl+Shift+D toggle dashboard (Shift avoids Ctrl+D conflict with Claude Code EOF)
+  if (e.ctrlKey && e.shiftKey && e.key === 'D') {
     e.preventDefault();
     const existing = [...tabManager.tabs.entries()].find(([, t]) => t.type === 'dashboard');
     if (existing) {
@@ -70,8 +70,8 @@ document.addEventListener('keydown', (e) => {
       tabManager.createTab('Dashboard', { type: 'dashboard' });
     }
   }
-  // Ctrl+H toggle history
-  if (e.ctrlKey && e.key === 'h') {
+  // Ctrl+Shift+H toggle history (Shift avoids Ctrl+H conflict with terminal backspace)
+  if (e.ctrlKey && e.shiftKey && e.key === 'H') {
     e.preventDefault();
     const existing = [...tabManager.tabs.entries()].find(([, t]) => t.type === 'history');
     if (existing) {

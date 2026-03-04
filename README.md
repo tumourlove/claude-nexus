@@ -36,8 +36,8 @@ Sessions know their role and capabilities from startup via injected system promp
 - **Worker** sessions focus on assigned tasks and report back
 
 ### Panels
-- **Dashboard** (Ctrl+D) — Real-time overview of all sessions and activity
-- **History** (Ctrl+H) — Browse past session output with search
+- **Dashboard** (Ctrl+Shift+D) — Real-time overview of all sessions and activity
+- **History** (Ctrl+Shift+H) — Browse past session output with search
 
 ### Autopilot (v0.2.0)
 - **Live preview cards** — Dashboard shows last 5 lines of each session's output
@@ -66,8 +66,8 @@ Sessions know their role and capabilities from startup via injected system promp
 | Ctrl+W | Close tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1-9 | Jump to tab by number |
-| Ctrl+D | Dashboard panel |
-| Ctrl+H | History panel |
+| Ctrl+Shift+D | Dashboard panel |
+| Ctrl+Shift+H | History panel |
 | Ctrl+C | Copy selection (or SIGINT if no selection) |
 | Ctrl+V | Paste text or image |
 | Ctrl+X | Cut selection |
