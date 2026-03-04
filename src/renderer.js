@@ -184,6 +184,14 @@ window.nexus.onAllWorkersComplete(({ results }) => {
   if (dash) dash.addLogEntry(`\u2713 All ${results.length} workers complete!`);
 });
 
+// Auto-retry notification
+window.nexus.onRetryAvailable(({ id, retryCount, maxRetries }) => {
+  const dash = tabManager.getDashboard();
+  if (dash) {
+    dash.addLogEntry(`\u2717 Session ${id} failed (retry ${retryCount}/${maxRetries} available)`);
+  }
+});
+
 // Focus tab from dashboard
 window.addEventListener('nexus:focus-tab', (e) => {
   tabManager.activateTab(e.detail.id);

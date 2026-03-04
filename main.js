@@ -144,6 +144,24 @@ ipcMain.handle('app:update-claude', async () => {
   }
 });
 
+ipcMain.on('session:retry', (_event, { id, originalInfo }) => {
+  const retryPrompt = originalInfo.initialPrompt
+    ? `${originalInfo.initialPrompt}\n\nNote: Previous attempt failed. Try a different approach.`
+    : undefined;
+
+  sessionManager.createSession(id, {
+    label: originalInfo.label,
+    cwd: originalInfo.cwd,
+    template: originalInfo.template,
+    isLead: originalInfo.isLead,
+    initialPrompt: retryPrompt,
+  });
+
+  // Increment retry count on the new session
+  const session = sessionManager.sessions.get(id);
+  if (session) session.retryCount = (originalInfo.retryCount || 0) + 1;
+});
+
 ipcMain.handle('dialog:open-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],

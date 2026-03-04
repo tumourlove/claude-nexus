@@ -77,6 +77,8 @@ class SessionManager {
       createdAt: Date.now(),
       lastOutputAt: Date.now(),
       initialPrompt: initialPrompt || null,
+      retryCount: 0,
+      maxRetries: 2,
     };
 
     ptyProc.onData((data) => {
@@ -98,7 +100,19 @@ class SessionManager {
     });
 
     ptyProc.onExit(({ exitCode }) => {
-      this.updateStatus(id, exitCode === 0 ? 'done' : 'error');
+      const status = exitCode === 0 ? 'done' : 'error';
+      this.updateStatus(id, status);
+
+      // If failed and under retry limit, offer retry
+      if (exitCode !== 0 && session.retryCount < session.maxRetries) {
+        this.mainWindow.webContents.send('session:retry-available', {
+          id,
+          exitCode,
+          retryCount: session.retryCount,
+          maxRetries: session.maxRetries,
+        });
+      }
+
       this.mainWindow.webContents.send('session:exited', { id, exitCode });
       this._cleanup(id);
     });

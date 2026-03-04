@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('nexus', {
   onStuckWarning: (cb) => ipcRenderer.on('session:stuck-warning', (_e, d) => cb(d)),
   onSessionResult: (cb) => ipcRenderer.on('session:result', (_e, d) => cb(d)),
   onAllWorkersComplete: (cb) => ipcRenderer.on('workers:all-complete', (_e, d) => cb(d)),
+  retrySession: (id, originalInfo) => ipcRenderer.send('session:retry', { id, originalInfo }),
+  onRetryAvailable: (cb) => ipcRenderer.on('session:retry-available', (_e, d) => cb(d)),
 
   // Auto-updater
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
