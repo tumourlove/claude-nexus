@@ -72,17 +72,76 @@ export class TabManager {
     term.loadAddon(fitAddon);
     term.open(termEl);
 
+    // Clipboard shortcuts: Ctrl+C (copy/SIGINT), Ctrl+V (paste), Ctrl+X (copy+clear)
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+
+      // Ctrl+C: copy if selection exists, otherwise let terminal send SIGINT
+      if (e.ctrlKey && e.key === 'c') {
+        const sel = term.getSelection();
+        if (sel) {
+          window.nexus.clipboardWriteText(sel);
+          term.clearSelection();
+          return false; // prevent terminal from sending \x03
+        }
+        return true; // no selection → send SIGINT
+      }
+
+      // Ctrl+V: paste text or image from clipboard
+      if (e.ctrlKey && e.key === 'v') {
+        (async () => {
+          // Check for image first
+          if (window.nexus.clipboardHasImage()) {
+            const imgPath = await window.nexus.saveClipboardImage();
+            if (imgPath) {
+              window.nexus.terminalWrite(id, imgPath);
+              return;
+            }
+          }
+          // Otherwise paste text
+          const text = window.nexus.clipboardReadText();
+          if (text) {
+            // Bracket paste so multi-line text is handled correctly
+            window.nexus.terminalWrite(id, text);
+          }
+        })();
+        return false;
+      }
+
+      // Ctrl+X: copy selection then clear it
+      if (e.ctrlKey && e.key === 'x') {
+        const sel = term.getSelection();
+        if (sel) {
+          window.nexus.clipboardWriteText(sel);
+          term.clearSelection();
+        }
+        return false;
+      }
+
+      return true;
+    });
+
     term.onData((data) => window.nexus.terminalWrite(id, data));
     window.nexus.onTerminalData(id, (data) => term.write(data));
 
     this.tabs.set(id, { term, fitAddon, termEl, tabEl, label, type });
     this.activateTab(id);
 
-    window.nexus.createSession(id, label, {
-      cwd: options.cwd,
-      initialPrompt: options.initialPrompt,
-      template: options.template,
-      isLead: options.isLead,
+    // Defer session creation so the terminal has settled dimensions.
+    // Without this, the pty spawns at 80x30 and Claude Code renders its
+    // initial UI before the resize message arrives, causing layout glitches.
+    requestAnimationFrame(() => {
+      fitAddon.fit();
+      const cols = term.cols;
+      const rows = term.rows;
+      window.nexus.createSession(id, label, {
+        cwd: options.cwd,
+        initialPrompt: options.initialPrompt,
+        template: options.template,
+        isLead: options.isLead,
+        cols,
+        rows,
+      });
     });
 
     return id;

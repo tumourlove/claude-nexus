@@ -6,8 +6,10 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { SessionManager } = require('./src/session-manager');
 const { IpcServer } = require('./src/ipc-server');
 const { Scratchpad } = require('./src/scratchpad');
@@ -66,8 +68,8 @@ function createWindow() {
   ipcServer.start();
 }
 
-ipcMain.on('session:create', (_event, { id, label, cwd, initialPrompt, template, isLead }) => {
-  sessionManager.createSession(id, { label, cwd, initialPrompt, template, isLead });
+ipcMain.on('session:create', (_event, { id, label, cwd, initialPrompt, template, isLead, cols, rows }) => {
+  sessionManager.createSession(id, { label, cwd, initialPrompt, template, isLead, cols, rows });
 });
 
 ipcMain.on('session:close', (_event, { id }) => {
@@ -100,6 +102,17 @@ ipcMain.handle('dialog:open-folder', async () => {
 // Returns null if a directory was passed as CLI arg, or the startup cwd for picker mode
 ipcMain.handle('app:startup-cwd', () => {
   return process.argv[2] || null;
+});
+
+// Save clipboard image to temp file and return path
+ipcMain.handle('clipboard:save-image', async () => {
+  const img = clipboard.readImage();
+  if (img.isEmpty()) return null;
+  const tmpDir = path.join(os.tmpdir(), 'claude-nexus-images');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const filePath = path.join(tmpDir, `paste-${Date.now()}.png`);
+  fs.writeFileSync(filePath, img.toPNG());
+  return filePath;
 });
 
 app.whenReady().then(createWindow);

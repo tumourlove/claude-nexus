@@ -14,7 +14,7 @@ class SessionManager {
     this.worktreeManager = new WorktreeManager();
   }
 
-  createSession(id, { label, cwd, initialPrompt, template, isLead = false, useWorktree = false }) {
+  createSession(id, { label, cwd, initialPrompt, template, isLead = false, useWorktree = false, cols = 80, rows = 30 }) {
     let resolvedCwd = cwd || process.argv[2] || process.env.USERPROFILE || process.env.HOME;
 
     // Optionally create an isolated git worktree for this session
@@ -45,8 +45,8 @@ class SessionManager {
 
     const ptyProc = pty.spawn(claudePath, args, {
       name: 'xterm-256color',
-      cols: 80,
-      rows: 30,
+      cols,
+      rows,
       cwd: resolvedCwd,
       env: (() => {
         const env = { ...process.env };
