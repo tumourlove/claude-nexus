@@ -8,7 +8,7 @@
     "bundle": "esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser --format=iife --loader:.css=css",
     "rebuild": "electron-rebuild",
     "build": "npm run bundle && electron-builder",
-    "postinstall": "electron-rebuild || echo 'electron-rebuild failed, continuing...'"
+    "postinstall": "node scripts/patch-node-pty.js && electron-rebuild -f -w node-pty || echo 'electron-rebuild failed, continuing...'"
   },
   "type": "commonjs",
   "dependencies": {
