@@ -209,8 +209,18 @@ function setupAutoUpdater() {
     });
   });
 
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', (info) => {
     mainWindow.webContents.send('updater:ready');
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: `Claude Nexus v${info.version} has been downloaded.`,
+      detail: 'Restart now to apply the update?',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
   });
 
   autoUpdater.on('error', (err) => {
