@@ -1,6 +1,6 @@
 {
   "name": "claude-nexus",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tabbed Electron terminal for parallel Claude Code sessions with MCP coordination",
   "main": "main.js",
   "scripts": {

@@ -231,7 +231,22 @@ window.nexus.getVersion().then(v => {
   versionEl.textContent = `v${v}`;
 });
 
+const checkBtn = document.getElementById('check-update-btn');
+checkBtn.addEventListener('click', () => {
+  checkBtn.textContent = 'Checking...';
+  checkBtn.disabled = true;
+  window.nexus.checkForUpdates();
+  // Reset after timeout if no response
+  setTimeout(() => {
+    if (checkBtn.textContent === 'Checking...') {
+      checkBtn.textContent = 'Check for updates';
+      checkBtn.disabled = false;
+    }
+  }, 10000);
+});
+
 window.nexus.onUpdateAvailable(({ version }) => {
+  checkBtn.style.display = 'none';
   updateEl.className = 'update-available';
   updateEl.textContent = `Update v${version} available`;
   updateEl.title = 'Click to download';
@@ -243,7 +258,10 @@ window.nexus.onUpdateAvailable(({ version }) => {
 });
 
 window.nexus.onUpdateUpToDate(() => {
-  updateEl.textContent = '';
+  updateEl.textContent = 'Up to date';
+  checkBtn.textContent = 'Check for updates';
+  checkBtn.disabled = false;
+  setTimeout(() => { updateEl.textContent = ''; }, 3000);
 });
 
 window.nexus.onUpdateProgress(({ percent }) => {
@@ -259,4 +277,6 @@ window.nexus.onUpdateReady(() => {
 
 window.nexus.onUpdateError(() => {
   updateEl.textContent = '';
+  checkBtn.textContent = 'Check for updates';
+  checkBtn.disabled = false;
 });
