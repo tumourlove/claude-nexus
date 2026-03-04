@@ -4,12 +4,14 @@ const { SessionManager } = require('./src/session-manager');
 const { IpcServer } = require('./src/ipc-server');
 const { Scratchpad } = require('./src/scratchpad');
 const { HistoryManager } = require('./src/history-manager');
+const { ConflictDetector } = require('./src/conflict-detector');
 
 let mainWindow;
 let sessionManager;
 let ipcServer;
 let scratchpad;
 let historyManager;
+let conflictDetector;
 let tabCounter = 0;
 
 function createWindow() {
@@ -28,6 +30,7 @@ function createWindow() {
   sessionManager = new SessionManager(mainWindow);
   scratchpad = new Scratchpad();
   historyManager = new HistoryManager();
+  conflictDetector = new ConflictDetector();
 
   // Capture terminal output for history
   sessionManager.onOutput = (id, data) => {
@@ -38,6 +41,7 @@ function createWindow() {
     sessionManager,
     scratchpad,
     historyManager,
+    conflictDetector,
     onSpawnRequest: ({ cwd, initialPrompt, label, template, requestedBy }) => {
       tabCounter++;
       const id = `tab-${tabCounter}`;

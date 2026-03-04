@@ -4,10 +4,11 @@ const path = require('path');
 const fs = require('fs');
 
 class IpcServer {
-  constructor({ sessionManager, scratchpad, historyManager, onSpawnRequest }) {
+  constructor({ sessionManager, scratchpad, historyManager, conflictDetector, onSpawnRequest }) {
     this.sessionManager = sessionManager;
     this.scratchpad = scratchpad;
     this.historyManager = historyManager;
+    this.conflictDetector = conflictDetector;
     this.onSpawnRequest = onSpawnRequest;
     this.clients = new Map(); // sessionId -> socket
     this.server = null;
@@ -171,6 +172,41 @@ class IpcServer {
       case 'get_session_status': {
         const session = this.sessionManager.getSessionInfo(msg.sessionId);
         this._reply(socket, { type: 'session_status', session });
+        break;
+      }
+
+      case 'file_edit': {
+        if (this.conflictDetector) {
+          const conflicts = this.conflictDetector.checkConflict(msg.sessionId, msg.filepath);
+          this.conflictDetector.recordEdit(msg.sessionId, msg.filepath);
+          if (conflicts.length > 0) {
+            // Warn the editing session
+            this._reply(socket, {
+              type: 'conflict_warning',
+              filepath: msg.filepath,
+              conflictingSessions: conflicts,
+            });
+            // Warn the other sessions too
+            for (const otherId of conflicts) {
+              const otherSocket = this.clients.get(otherId);
+              if (otherSocket) {
+                this._reply(otherSocket, {
+                  type: 'conflict_warning',
+                  filepath: msg.filepath,
+                  conflictingSessions: [msg.sessionId],
+                });
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'get_session_files': {
+        if (this.conflictDetector) {
+          const files = this.conflictDetector.getSessionFiles(msg.sessionId);
+          this._reply(socket, { type: 'session_files', sessionId: msg.sessionId, files });
+        }
         break;
       }
     }
