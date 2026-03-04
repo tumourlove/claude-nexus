@@ -1,3 +1,11 @@
+// Prevent unhandled errors from crashing the app
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { SessionManager } = require('./src/session-manager');
