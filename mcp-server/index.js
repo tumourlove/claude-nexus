@@ -47,6 +47,10 @@ function sendIpc(data) {
   }
 }
 
+// Collected worker results for wait_for_workers
+const pendingResults = [];
+let resultWaiters = []; // resolve callbacks waiting for results
+
 function handleIpcMessage(msg) {
   // Handle responses from main process
   if (msg.type === 'sessions') {
@@ -55,6 +59,12 @@ function handleIpcMessage(msg) {
   }
   if (msg.type === 'message') {
     messageBus.send(msg.from, SESSION_ID, msg.message, msg.priority);
+    // If it's a result message, collect it and wake any waiters
+    if (msg.message && msg.message.startsWith('[RESULT ')) {
+      pendingResults.push({ from: msg.from, message: msg.message, timestamp: Date.now() });
+      for (const resolve of resultWaiters) resolve();
+      resultWaiters = [];
+    }
   }
 }
 
@@ -201,6 +211,36 @@ server.tool(
     });
     return {
       content: [{ type: 'text', text: `Result reported: ${status}` }],
+    };
+  }
+);
+
+server.tool(
+  'wait_for_workers',
+  'Block until worker sessions report results. Use this instead of polling get_session_status. Returns all results received since last call.',
+  {
+    timeout_seconds: z.number().default(300).describe('Max seconds to wait (default 5 min)'),
+    count: z.number().default(1).describe('Wait until this many results arrive'),
+  },
+  async ({ timeout_seconds, count }) => {
+    const deadline = Date.now() + timeout_seconds * 1000;
+
+    while (pendingResults.length < count && Date.now() < deadline) {
+      await new Promise((resolve) => {
+        resultWaiters.push(resolve);
+        // Also set a timeout so we don't block forever
+        setTimeout(resolve, Math.min(5000, deadline - Date.now()));
+      });
+    }
+
+    const results = pendingResults.splice(0);
+    if (results.length === 0) {
+      return {
+        content: [{ type: 'text', text: `No results received within ${timeout_seconds}s timeout.` }],
+      };
+    }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
     };
   }
 );
