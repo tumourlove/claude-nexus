@@ -2,7 +2,7 @@
 
 A tabbed Electron terminal for running multiple Claude Code sessions in parallel with full MCP-powered coordination.
 
-![Claude Nexus](https://img.shields.io/badge/version-0.1.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
+![Claude Nexus](https://img.shields.io/badge/version-0.2.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## What It Does
 
@@ -38,6 +38,17 @@ Sessions know their role and capabilities from startup via injected system promp
 ### Panels
 - **Dashboard** (Ctrl+D) — Real-time overview of all sessions and activity
 - **History** (Ctrl+H) — Browse past session output with search
+
+### Autopilot (v0.2.0)
+- **Live preview cards** — Dashboard shows last 5 lines of each session's output
+- **Session controls** — Cancel, restart, message, and focus buttons per session
+- **Tab badges** — Unread message count on inactive tabs
+- **Stuck detection** — Warns when a working session goes silent for 60s
+- **Auto-retry** — Failed workers can be retried with failure context (max 2 retries)
+- **Result aggregation** — Worker results collected and displayed on dashboard
+- **Real-time status** — Sessions tracked as idle/working/done/error/stuck
+- **Persistent scratchpad** — Shared state survives app restarts
+- **Update buttons** — Update Claude Code and Nexus from the dashboard
 
 ### System Integration
 - Conflict detection when multiple sessions edit the same file
