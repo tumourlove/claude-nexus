@@ -2,6 +2,7 @@ const pty = require('node-pty');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { WorktreeManager } = require('./worktree-manager');
 
 class SessionManager {
   constructor(mainWindow) {
@@ -10,10 +11,23 @@ class SessionManager {
     this.configDir = path.join(os.homedir(), '.claude-nexus', 'configs');
     fs.mkdirSync(this.configDir, { recursive: true });
     this.onOutput = null; // set by main.js
+    this.worktreeManager = new WorktreeManager();
   }
 
-  createSession(id, { label, cwd, initialPrompt, template, isLead = false }) {
-    const resolvedCwd = cwd || process.argv[2] || process.env.USERPROFILE || process.env.HOME;
+  createSession(id, { label, cwd, initialPrompt, template, isLead = false, useWorktree = false }) {
+    let resolvedCwd = cwd || process.argv[2] || process.env.USERPROFILE || process.env.HOME;
+
+    // Optionally create an isolated git worktree for this session
+    let worktreeInfo = null;
+    if (useWorktree) {
+      try {
+        worktreeInfo = this.worktreeManager.createWorktree(id, resolvedCwd);
+        resolvedCwd = worktreeInfo.path;
+      } catch (e) {
+        // Fall back to shared cwd if worktree creation fails
+        console.error(`Worktree creation failed for ${id}: ${e.message}`);
+      }
+    }
 
     // Write temporary MCP config for this session
     const mcpConfigPath = path.join(this.configDir, `mcp-${id}.json`);
@@ -44,6 +58,7 @@ class SessionManager {
       status: 'idle',
       isLead,
       mcpConfigPath,
+      worktree: worktreeInfo,
       createdAt: Date.now(),
     };
 
@@ -142,6 +157,10 @@ class SessionManager {
     if (session) {
       // Remove temp MCP config
       try { fs.unlinkSync(session.mcpConfigPath); } catch (e) { /* ignore */ }
+      // Clean up worktree if one was created
+      if (session.worktree) {
+        this.worktreeManager.removeWorktree(id);
+      }
       this.sessions.delete(id);
     }
   }
@@ -150,6 +169,7 @@ class SessionManager {
     for (const [id] of this.sessions) {
       this.closeSession(id);
     }
+    this.worktreeManager.cleanup();
   }
 }
 
