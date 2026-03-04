@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { SessionManager } = require('./src/session-manager');
 const { IpcServer } = require('./src/ipc-server');
@@ -75,6 +75,20 @@ ipcMain.on('terminal:resize', (_event, { id, cols, rows }) => {
 });
 
 ipcMain.handle('session:list', () => sessionManager.listSessions());
+
+ipcMain.handle('dialog:open-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Project Folder',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+// Returns null if a directory was passed as CLI arg, or the startup cwd for picker mode
+ipcMain.handle('app:startup-cwd', () => {
+  return process.argv[2] || null;
+});
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {

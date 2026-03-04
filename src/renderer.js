@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import { TabManager } from './tab-manager';
+import { ProjectPicker } from './project-picker';
 
 const container = document.getElementById('terminal-container');
 const tabBar = document.getElementById('tab-bar');
@@ -67,8 +68,20 @@ window.nexus.onSpawnRequested(({ id, label, cwd, initialPrompt, template }) => {
   tabManager.createTab(label || 'Worker', { id, cwd, initialPrompt, template });
 });
 
-// Create first tab as lead session
-tabManager.createTab('Lead', { isLead: true });
+// Startup: check if a project dir was passed, otherwise show picker
+async function startup() {
+  const startupCwd = await window.nexus.getStartupCwd();
+  if (startupCwd) {
+    tabManager.createTab('Lead', { isLead: true, cwd: startupCwd });
+  } else {
+    const pickerEl = document.getElementById('project-picker');
+    pickerEl.style.display = 'block';
+    new ProjectPicker(pickerEl, (projectPath) => {
+      tabManager.createTab('Lead', { isLead: true, cwd: projectPath });
+    });
+  }
+}
+startup();
 
 // Toast notifications
 const toastContainer = document.getElementById('toast-container');
