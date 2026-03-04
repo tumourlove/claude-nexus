@@ -12,6 +12,8 @@ class SessionManager {
     fs.mkdirSync(this.configDir, { recursive: true });
     this.onOutput = null; // set by main.js
     this.worktreeManager = new WorktreeManager();
+    this.stuckThresholdMs = 60000; // 60 seconds
+    this._stuckCheckInterval = setInterval(() => this._checkStuck(), 10000);
   }
 
   createSession(id, { label, cwd, initialPrompt, template, isLead = false, useWorktree = false, cols = 80, rows = 30 }) {
@@ -154,6 +156,19 @@ class SessionManager {
     }
   }
 
+  _checkStuck() {
+    const now = Date.now();
+    for (const [id, session] of this.sessions) {
+      if (session.status === 'working' && (now - session.lastOutputAt) > this.stuckThresholdMs) {
+        this.updateStatus(id, 'stuck');
+        this.mainWindow.webContents.send('session:stuck-warning', {
+          id,
+          lastOutputAge: Math.round((now - session.lastOutputAt) / 1000),
+        });
+      }
+    }
+  }
+
   _emitPreview(id, data) {
     // Strip ANSI codes for clean preview text
     const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
@@ -282,6 +297,7 @@ You are a WORKER session. You were spawned to handle a specific task. Focus on y
   }
 
   destroy() {
+    if (this._stuckCheckInterval) clearInterval(this._stuckCheckInterval);
     for (const [id] of this.sessions) {
       this.closeSession(id);
     }
