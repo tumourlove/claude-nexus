@@ -8,6 +8,8 @@ files:
   - "!docs/**"
   - "!scripts/**"
   - "!release/**"
+asarUnpack:
+  - "mcp-server/**"
 extraResources:
   - from: scripts/
     to: scripts/

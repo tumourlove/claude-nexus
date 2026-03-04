@@ -327,7 +327,11 @@ Do NOT spawn additional sessions — that is the lead's job. Complete your task 
 
   _buildMcpConfig(sessionId) {
     // Point to the nexus MCP server script
-    const serverScript = path.join(__dirname, '..', 'mcp-server', 'index.js');
+    // In packaged builds, mcp-server is in app.asar.unpacked (plain node can't read asar)
+    let serverScript = path.join(__dirname, '..', 'mcp-server', 'index.js');
+    if (!fs.existsSync(serverScript)) {
+      serverScript = serverScript.replace('app.asar', 'app.asar.unpacked');
+    }
     return {
       mcpServers: {
         [`nexus-${sessionId}`]: {
