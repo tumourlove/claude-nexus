@@ -1,10 +1,9 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
-const os = require('os');
-const pty = require('node-pty');
 const path = require('path');
+const { SessionManager } = require('./src/session-manager');
 
 let mainWindow;
-const sessions = new Map(); // id -> { pty, cwd }
+let sessionManager;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -18,59 +17,31 @@ function createWindow() {
     },
   });
   mainWindow.loadFile('index.html');
+  sessionManager = new SessionManager(mainWindow);
 }
 
-function spawnSession(id, cwd) {
-  const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
-  const resolvedCwd = cwd || process.argv[2] || process.env.USERPROFILE || process.env.HOME;
-
-  const ptyProc = pty.spawn(shell, [], {
-    name: 'xterm-256color',
-    cols: 80,
-    rows: 30,
-    cwd: resolvedCwd,
-    env: process.env,
-    useConpty: true,
-  });
-
-  ptyProc.onData((data) => {
-    mainWindow.webContents.send(`terminal:data:${id}`, data);
-  });
-
-  ptyProc.onExit(({ exitCode }) => {
-    mainWindow.webContents.send('session:exited', { id, exitCode });
-    sessions.delete(id);
-  });
-
-  sessions.set(id, { pty: ptyProc, cwd: resolvedCwd });
-}
-
-ipcMain.on('session:create', (_event, { id, label, cwd }) => {
-  spawnSession(id, cwd);
+ipcMain.on('session:create', (_event, { id, label, cwd, initialPrompt, template, isLead }) => {
+  sessionManager.createSession(id, { label, cwd, initialPrompt, template, isLead });
 });
 
 ipcMain.on('session:close', (_event, { id }) => {
-  const session = sessions.get(id);
-  if (session) {
-    session.pty.kill();
-    sessions.delete(id);
-  }
+  sessionManager.closeSession(id);
 });
 
 ipcMain.on('terminal:write', (_event, { id, data }) => {
-  const session = sessions.get(id);
-  if (session) session.pty.write(data);
+  sessionManager.writeToSession(id, data);
 });
 
 ipcMain.on('terminal:resize', (_event, { id, cols, rows }) => {
-  const session = sessions.get(id);
-  if (session) {
-    try { session.pty.resize(cols, rows); } catch (e) { /* ignore */ }
-  }
+  sessionManager.resizeSession(id, cols, rows);
+});
+
+ipcMain.handle('session:list', () => {
+  return sessionManager.listSessions();
 });
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
-  for (const [, session] of sessions) session.pty.kill();
+  if (sessionManager) sessionManager.destroy();
   app.quit();
 });
