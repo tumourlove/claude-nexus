@@ -146,6 +146,8 @@ window.nexus.onToast(({ title, body, type }) => {
   setTimeout(() => {
     toast.classList.remove('show');
     toast.addEventListener('transitionend', () => toast.remove());
+    // Fallback removal if transition doesn't fire
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
   }, 4000);
 });
 
