@@ -199,6 +199,18 @@ window.nexus.onRetryAvailable(({ id, retryCount, maxRetries }) => {
   }
 });
 
+// Task queue updates -> dashboard task board
+window.nexus.onTasksUpdated((data) => {
+  const dash = tabManager.getDashboard();
+  if (dash) dash.updateTasks(data.tasks);
+});
+
+// Session progress updates -> dashboard progress bars
+window.nexus.onSessionProgress((data) => {
+  const dash = tabManager.getDashboard();
+  if (dash) dash.updateProgress(data);
+});
+
 // Heartbeat events — wire up listener (dashboard auto-refreshes on status changes)
 window.nexus.onSessionHeartbeat(() => {});
 

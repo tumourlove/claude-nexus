@@ -4,17 +4,21 @@ const path = require('path');
 const fs = require('fs');
 
 class IpcServer {
-  constructor({ sessionManager, scratchpad, historyManager, conflictDetector, onSpawnRequest }) {
+  constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, onSpawnRequest }) {
     this.sessionManager = sessionManager;
     this.scratchpad = scratchpad;
     this.historyManager = historyManager;
     this.conflictDetector = conflictDetector;
+    this.taskQueue = taskQueue;
     this.onSpawnRequest = onSpawnRequest;
     this.clients = new Map(); // sessionId -> socket
     this.server = null;
     this.results = new Map(); // sessionId -> { result, status, timestamp }
     this.spawnedWorkers = new Set(); // track worker session IDs
     this.heartbeats = new Map(); // sessionId -> { timestamp }
+    this.knowledgeBase = null; // initialized when first session provides a cwd
+    this.snippets = new Map(); // snippetId -> { filePath, startLine, endLine, label, from }
+    this.snippetId = 0;
   }
 
   getIpcPath() {
@@ -315,6 +319,206 @@ class IpcServer {
         break;
       }
 
+      // --- Task Queue ---
+      case 'task_push': {
+        const taskId = this.taskQueue.push({
+          title: msg.title,
+          description: msg.description,
+          priority: msg.priority,
+          dependencies: msg.dependencies,
+          createdBy: msg.createdBy,
+        });
+        this._reply(socket, { type: 'task_pushed', taskId, requestId: msg.requestId });
+        // Notify dashboard
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('tasks:updated', { tasks: this.taskQueue.list() });
+        }
+        break;
+      }
+
+      case 'task_pull': {
+        const task = this.taskQueue.pull(msg.sessionId);
+        this._reply(socket, { type: 'task_pulled', task, requestId: msg.requestId });
+        if (task && this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('tasks:updated', { tasks: this.taskQueue.list() });
+        }
+        break;
+      }
+
+      case 'task_update': {
+        const task = this.taskQueue.update(msg.taskId, { status: msg.status, result: msg.result });
+        this._reply(socket, { type: 'task_updated', task, requestId: msg.requestId });
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('tasks:updated', { tasks: this.taskQueue.list() });
+        }
+        break;
+      }
+
+      case 'task_list': {
+        const tasks = this.taskQueue.list(msg.filter);
+        this._reply(socket, { type: 'task_listed', tasks, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Snippets ---
+      case 'share_snippet': {
+        const snippetId = String(++this.snippetId);
+        // Read the file content
+        let content = '';
+        try {
+          const lines = fs.readFileSync(msg.filePath, 'utf8').split('\n');
+          content = lines.slice(msg.startLine - 1, msg.endLine).join('\n');
+        } catch (e) {
+          content = `(error reading file: ${e.message})`;
+        }
+        this.snippets.set(snippetId, {
+          filePath: msg.filePath,
+          startLine: msg.startLine,
+          endLine: msg.endLine,
+          label: msg.label,
+          from: msg.from,
+          content,
+        });
+        // Store in scratchpad for persistence
+        this.scratchpad.set(snippetId, JSON.stringify({
+          filePath: msg.filePath,
+          startLine: msg.startLine,
+          endLine: msg.endLine,
+          label: msg.label,
+          from: msg.from,
+        }), '_snippets');
+
+        // Send to target or broadcast
+        const snippetMsg = `[SNIPPET #${snippetId}] ${msg.label}\n${msg.filePath}:${msg.startLine}-${msg.endLine}\n${content}`;
+        if (msg.target) {
+          const targetSocket = this.clients.get(msg.target);
+          if (targetSocket) {
+            this._reply(targetSocket, { type: 'message', from: msg.from, message: snippetMsg, priority: 'normal' });
+          }
+        } else {
+          for (const [id, s] of this.clients) {
+            if (id !== msg.from) {
+              this._reply(s, { type: 'message', from: msg.from, message: snippetMsg, priority: 'normal' });
+            }
+          }
+        }
+        this._reply(socket, { type: 'snippet_shared', snippetId, requestId: msg.requestId });
+        break;
+      }
+
+      case 'get_snippet': {
+        const snippet = this.snippets.get(msg.snippetId);
+        if (snippet) {
+          // Re-read fresh from disk
+          let content = '';
+          try {
+            const lines = fs.readFileSync(snippet.filePath, 'utf8').split('\n');
+            content = lines.slice(snippet.startLine - 1, snippet.endLine).join('\n');
+          } catch (e) {
+            content = snippet.content; // fallback to cached
+          }
+          this._reply(socket, {
+            type: 'snippet_content',
+            ...snippet,
+            content,
+            requestId: msg.requestId,
+          });
+        } else {
+          this._reply(socket, { type: 'snippet_content', content: null, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      // --- File Locking ---
+      case 'claim_file': {
+        const result = this.conflictDetector.claimFile(msg.sessionId, msg.filepath, msg.intent);
+        this._reply(socket, { type: 'file_claimed', ...result, requestId: msg.requestId });
+        // If conflict, notify the other session
+        if (result.conflict) {
+          const otherSocket = this.clients.get(result.lockedBy);
+          if (otherSocket) {
+            this._reply(otherSocket, {
+              type: 'message',
+              from: msg.sessionId,
+              message: `[LOCK_CONFLICT] Session ${msg.sessionId} tried to claim ${msg.filepath} which you have locked`,
+              priority: 'normal',
+            });
+          }
+        }
+        break;
+      }
+
+      case 'release_file': {
+        const released = this.conflictDetector.releaseFile(msg.sessionId, msg.filepath);
+        this._reply(socket, { type: 'file_released', released, requestId: msg.requestId });
+        break;
+      }
+
+      case 'list_locks': {
+        const locks = this.conflictDetector.listLocks();
+        this._reply(socket, { type: 'locks_listed', locks, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Progress Streaming ---
+      case 'stream_progress': {
+        // Forward to lead sessions as a message (but NOT as a result, so it won't wake wait_for_workers)
+        for (const [id, s] of this.clients) {
+          const session = this.sessionManager.getSessionInfo(id);
+          if (session && session.isLead) {
+            this._reply(s, {
+              type: 'message',
+              from: msg.sessionId,
+              message: `[PROGRESS${msg.percent !== undefined ? ` ${msg.percent}%` : ''}] ${msg.message}`,
+              priority: 'normal',
+            });
+          }
+        }
+        // Notify renderer for dashboard progress bars
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('session:progress', {
+            id: msg.sessionId,
+            message: msg.message,
+            percent: msg.percent,
+          });
+        }
+        break;
+      }
+
+      // --- Knowledge Base ---
+      case 'kb_add': {
+        if (!this.knowledgeBase) {
+          this._initKnowledgeBase();
+        }
+        if (this.knowledgeBase) {
+          const entryId = this.knowledgeBase.add({
+            title: msg.title,
+            content: msg.content,
+            category: msg.category,
+            tags: msg.tags,
+            createdBy: msg.createdBy,
+          });
+          this._reply(socket, { type: 'kb_added', entryId, requestId: msg.requestId });
+        } else {
+          this._reply(socket, { type: 'kb_added', entryId: null, error: 'No project directory set', requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'kb_search': {
+        if (!this.knowledgeBase) this._initKnowledgeBase();
+        const results = this.knowledgeBase ? this.knowledgeBase.search(msg.query) : [];
+        this._reply(socket, { type: 'kb_results', results, requestId: msg.requestId });
+        break;
+      }
+
+      case 'kb_list': {
+        if (!this.knowledgeBase) this._initKnowledgeBase();
+        const entries = this.knowledgeBase ? this.knowledgeBase.list(msg.category) : [];
+        this._reply(socket, { type: 'kb_entries', entries, requestId: msg.requestId });
+        break;
+      }
+
       case 'heartbeat': {
         this.heartbeats.set(msg.sessionId, { timestamp: msg.timestamp });
         if (this.sessionManager.mainWindow) {
@@ -342,6 +546,16 @@ class IpcServer {
     if (age < 15000) return 'healthy';
     if (age < 30000) return 'slow';
     return 'unresponsive';
+  }
+
+  _initKnowledgeBase() {
+    // Use the first session's cwd as the project directory
+    const sessions = this.sessionManager.listSessions();
+    const leadSession = sessions.find(s => s.isLead) || sessions[0];
+    if (leadSession && leadSession.cwd) {
+      const { KnowledgeBase } = require('./knowledge-base');
+      this.knowledgeBase = new KnowledgeBase(leadSession.cwd);
+    }
   }
 
   _reply(socket, data) {

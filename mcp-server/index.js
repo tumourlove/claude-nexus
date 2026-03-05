@@ -20,16 +20,21 @@ const TEMPLATE_TOOLS = {
     'list_sessions', 'read_messages', 'report_result', 'wait_for_workers',
     'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
+    'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
+    'kb_search', 'kb_list',
   ]),
   reviewer: new Set([
     'list_sessions', 'send_message', 'read_messages', 'report_result',
     'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
+    'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
+    'kb_search', 'kb_list', 'kb_add', 'share_snippet',
   ]),
   explorer: new Set([
     'list_sessions', 'read_messages', 'report_result',
     'read_session_history', 'search_across_sessions',
     'scratchpad_get', 'scratchpad_list',
+    'list_tasks', 'get_snippet', 'kb_search', 'kb_list',
   ]),
 };
 
@@ -502,6 +507,315 @@ server.tool(
       const response = await ipcRequest({ type: 'save_checkpoint', sessionId: SESSION_ID, label });
       return {
         content: [{ type: 'text', text: `Checkpoint saved: ${response.filepath}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Task Queue Tools ---
+
+server.tool(
+  'push_task',
+  'Push a task to the shared queue (lead use). Workers will pull tasks automatically.',
+  {
+    title: z.string().describe('Task title'),
+    description: z.string().optional().describe('Detailed task description'),
+    priority: z.number().min(1).max(5).default(3).describe('Priority 1=highest 5=lowest'),
+    dependencies: z.array(z.string()).optional().describe('Task IDs that must complete first'),
+  },
+  async ({ title, description, priority, dependencies }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'task_push',
+        title,
+        description,
+        priority,
+        dependencies,
+        createdBy: SESSION_ID,
+      });
+      return {
+        content: [{ type: 'text', text: `Task #${response.taskId} created: ${title} (priority ${priority})` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'pull_task',
+  'Pull the next available task from the queue. Returns the highest-priority unblocked task.',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({
+        type: 'task_pull',
+        sessionId: SESSION_ID,
+      });
+      if (response.task) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify(response.task, null, 2) }],
+        };
+      }
+      return { content: [{ type: 'text', text: 'No tasks available in queue.' }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'update_task',
+  'Update a task status or result',
+  {
+    task_id: z.string().describe('Task ID to update'),
+    status: z.enum(['in_progress', 'done', 'failed']).optional().describe('New status'),
+    result: z.string().optional().describe('Task result or output'),
+  },
+  async ({ task_id, status, result }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'task_update',
+        taskId: task_id,
+        status,
+        result,
+      });
+      return {
+        content: [{ type: 'text', text: `Task #${task_id} updated: ${status || 'result set'}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'list_tasks',
+  'List tasks in the queue with optional status filter',
+  {
+    status: z.enum(['pending', 'assigned', 'in_progress', 'done', 'failed']).optional().describe('Filter by status'),
+  },
+  async ({ status }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'task_list',
+        filter: status ? { status } : undefined,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response.tasks, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Snippet Sharing Tools ---
+
+server.tool(
+  'share_snippet',
+  'Share a file snippet with another session (or broadcast to all)',
+  {
+    file_path: z.string().describe('Path to the file'),
+    start_line: z.number().describe('Starting line number'),
+    end_line: z.number().describe('Ending line number'),
+    label: z.string().optional().describe('Description of the snippet'),
+    target_session_id: z.string().optional().describe('Target session (omit to broadcast)'),
+  },
+  async ({ file_path, start_line, end_line, label, target_session_id }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'share_snippet',
+        filePath: file_path,
+        startLine: start_line,
+        endLine: end_line,
+        label: label || `${file_path}:${start_line}-${end_line}`,
+        from: SESSION_ID,
+        target: target_session_id,
+      });
+      return {
+        content: [{ type: 'text', text: `Snippet shared: ${label || file_path}:${start_line}-${end_line} (id: ${response.snippetId})` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'get_snippet',
+  'Retrieve a shared snippet by ID (reads fresh from disk)',
+  {
+    snippet_id: z.string().describe('Snippet ID'),
+  },
+  async ({ snippet_id }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'get_snippet',
+        snippetId: snippet_id,
+      });
+      if (response.content) {
+        return {
+          content: [{ type: 'text', text: `[${response.label}] ${response.filePath}:${response.startLine}-${response.endLine}\n\n${response.content}` }],
+        };
+      }
+      return { content: [{ type: 'text', text: `Snippet "${snippet_id}" not found.` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- File Locking Tools ---
+
+server.tool(
+  'claim_file',
+  'Claim a file for editing (prevents conflicts with other sessions)',
+  {
+    file_path: z.string().describe('File path to claim'),
+    intent: z.string().default('edit').describe('What you plan to do with the file'),
+  },
+  async ({ file_path, intent }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'claim_file',
+        sessionId: SESSION_ID,
+        filepath: file_path,
+        intent,
+      });
+      if (response.conflict) {
+        return {
+          content: [{ type: 'text', text: `CONFLICT: ${file_path} is locked by session ${response.lockedBy} (intent: ${response.intent})` }],
+        };
+      }
+      return { content: [{ type: 'text', text: `Claimed: ${file_path}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'release_file',
+  'Release a file lock you previously claimed',
+  {
+    file_path: z.string().describe('File path to release'),
+  },
+  async ({ file_path }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'release_file',
+        sessionId: SESSION_ID,
+        filepath: file_path,
+      });
+      return {
+        content: [{ type: 'text', text: response.released ? `Released: ${file_path}` : `No lock found for: ${file_path}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'list_locks',
+  'List all active file locks across sessions',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({ type: 'list_locks' });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response.locks, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Progress Streaming ---
+
+server.tool(
+  'stream_progress',
+  'Report intermediate progress to the lead session (does not wake wait_for_workers)',
+  {
+    message: z.string().describe('Progress update message'),
+    percent: z.number().min(0).max(100).optional().describe('Completion percentage'),
+  },
+  async ({ message, percent }) => {
+    sendIpc({
+      type: 'stream_progress',
+      sessionId: SESSION_ID,
+      message,
+      percent,
+    });
+    return {
+      content: [{ type: 'text', text: `Progress reported: ${message}${percent !== undefined ? ` (${percent}%)` : ''}` }],
+    };
+  }
+);
+
+// --- Knowledge Base Tools ---
+
+server.tool(
+  'kb_add',
+  'Add an entry to the project knowledge base (persists across sessions)',
+  {
+    title: z.string().describe('Entry title'),
+    content: z.string().describe('Entry content'),
+    category: z.enum(['architecture', 'pattern', 'gotcha', 'decision', 'api', 'general']).default('general').describe('Entry category'),
+    tags: z.array(z.string()).optional().describe('Tags for searchability'),
+  },
+  async ({ title, content, category, tags }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'kb_add',
+        title,
+        content,
+        category,
+        tags,
+        createdBy: SESSION_ID,
+      });
+      return {
+        content: [{ type: 'text', text: `Knowledge entry #${response.entryId} added: ${title} [${category}]` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kb_search',
+  'Search the project knowledge base',
+  {
+    query: z.string().describe('Search query (matches title, content, tags)'),
+  },
+  async ({ query }) => {
+    try {
+      const response = await ipcRequest({ type: 'kb_search', query });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response.results, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kb_list',
+  'List knowledge base entries, optionally filtered by category',
+  {
+    category: z.enum(['architecture', 'pattern', 'gotcha', 'decision', 'api', 'general']).optional().describe('Filter by category'),
+  },
+  async ({ category }) => {
+    try {
+      const response = await ipcRequest({ type: 'kb_list', category });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response.entries, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };

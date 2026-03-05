@@ -16,6 +16,7 @@ const { Scratchpad } = require('./src/scratchpad');
 const { HistoryManager } = require('./src/history-manager');
 const { ConflictDetector } = require('./src/conflict-detector');
 const { NotificationManager } = require('./src/notification-manager');
+const { TaskQueue } = require('./src/task-queue');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
@@ -25,6 +26,8 @@ let scratchpad;
 let historyManager;
 let conflictDetector;
 let notificationManager;
+let taskQueue;
+let knowledgeBase;
 let tabCounter = 0;
 
 function createWindow() {
@@ -42,6 +45,7 @@ function createWindow() {
 
   sessionManager = new SessionManager(mainWindow);
   scratchpad = new Scratchpad();
+  taskQueue = new TaskQueue();
   historyManager = new HistoryManager();
   conflictDetector = new ConflictDetector();
   notificationManager = new NotificationManager(mainWindow);
@@ -56,6 +60,7 @@ function createWindow() {
     scratchpad,
     historyManager,
     conflictDetector,
+    taskQueue,
     onSpawnRequest: ({ cwd, initialPrompt, label, template, requestedBy }) => {
       tabCounter++;
       const id = `worker-${tabCounter}`;
@@ -287,6 +292,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (ipcServer) ipcServer.stop();
   if (scratchpad) scratchpad.destroy();
+  if (knowledgeBase) knowledgeBase.destroy();
   if (sessionManager) sessionManager.destroy();
   app.quit();
 });

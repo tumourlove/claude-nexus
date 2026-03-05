@@ -25,6 +25,10 @@ export class Dashboard {
         <h3>Worker Results</h3>
         <div class="dash-results-list" id="dash-results-list"></div>
       </div>
+      <div class="dash-section" id="dash-tasks">
+        <h3>Task Queue</h3>
+        <div id="dash-task-list" class="dash-task-list"></div>
+      </div>
       <div class="dash-log-panel">
         <h3>Activity</h3>
         <div class="dashboard-log" id="dash-log">
@@ -81,6 +85,7 @@ export class Dashboard {
             <span class="dash-card-cwd" title="${s.cwd || ''}">${this._shortenPath(s.cwd)}</span>
           </div>
           <div class="dash-card-preview">${preview.length ? preview.map(l => `<div class="dash-preview-line">${this._escapeHtml(l)}</div>`).join('') : '<span class="dash-preview-empty">No output yet</span>'}</div>
+          ${s.progress || (this._progress && this._progress[s.id]) ? `<div class="progress-bar"><div class="progress-fill" style="width:${(s.progress || this._progress[s.id]).percent || 0}%"></div><span class="progress-text">${this._escape((s.progress || this._progress[s.id]).message)}</span></div>` : ''}
           <div class="dash-card-actions">
             <button class="dash-card-btn dash-focus-btn" data-action="focus" data-id="${s.id}" title="Focus this tab">Focus</button>
             <button class="dash-card-btn dash-msg-btn" data-action="message" data-id="${s.id}" title="Send message">Message</button>
@@ -152,6 +157,38 @@ export class Dashboard {
     el.appendChild(entry);
     while (el.children.length > 100) el.removeChild(el.firstChild);
     el.scrollTop = el.scrollHeight;
+  }
+
+  updateTasks(tasks) {
+    const el = document.getElementById('dash-task-list');
+    if (!el) return;
+    if (!tasks || tasks.length === 0) {
+      el.innerHTML = '<div class="dash-empty">No tasks in queue</div>';
+      return;
+    }
+    const statusOrder = ['in_progress', 'assigned', 'pending', 'done', 'failed'];
+    const sorted = [...tasks].sort((a, b) => {
+      const ai = statusOrder.indexOf(a.status);
+      const bi = statusOrder.indexOf(b.status);
+      return ai - bi || a.priority - b.priority;
+    });
+    el.innerHTML = sorted.map(t => `
+      <div class="dash-task dash-task-${t.status}">
+        <span class="task-priority">P${t.priority}</span>
+        <span class="task-title">${this._escape(t.title)}</span>
+        <span class="task-status">${t.status}</span>
+        ${t.assignee ? `<span class="task-assignee">${this._escape(t.assignee)}</span>` : ''}
+      </div>
+    `).join('');
+  }
+
+  updateProgress(data) {
+    if (!this._progress) this._progress = {};
+    this._progress[data.id] = { message: data.message, percent: data.percent };
+  }
+
+  _escape(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   _escapeHtml(str) {
