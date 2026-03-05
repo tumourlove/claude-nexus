@@ -7,10 +7,10 @@
   <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
-  <div id="tab-bar">
-    <div class="tab-add" title="New tab (Ctrl+T)">+</div>
+  <div id="tab-bar" role="tablist" aria-label="Session tabs">
+    <div class="tab-add" title="New tab (Ctrl+T)" role="button" aria-label="New tab">+</div>
     <div class="tab-bar-spacer"></div>
-    <div id="help-btn" title="Help &amp; Shortcuts (?)">?</div>
+    <div id="help-btn" title="Help &amp; Shortcuts (?)" role="button" aria-label="Help and shortcuts">?</div>
   </div>
   <div id="help-dropdown" style="display:none">
     <div class="help-header">Keyboard Shortcuts</div>
@@ -52,8 +52,8 @@
     <a id="help-docs-link" class="help-row help-link" href="#">Documentation &amp; README</a>
     <a id="help-issues-link" class="help-row help-link" href="#">Report an Issue</a>
   </div>
-  <div id="terminal-container"></div>
-  <div id="status-bar">
+  <div id="terminal-container" role="main" aria-label="Terminal area"></div>
+  <div id="status-bar" role="navigation" aria-label="Status bar">
     <span id="session-count">0 sessions</span>
     <span id="app-version"></span>
     <span id="update-status"></span>
@@ -61,7 +61,7 @@
   </div>
   <div id="project-picker" style="display:none"></div>
   <div id="chat-sidebar-container"></div>
-  <div id="toast-container"></div>
+  <div id="toast-container" role="alert" aria-live="polite"></div>
   <script src="dist/renderer.js"></script>
 </body>
 </html>

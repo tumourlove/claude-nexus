@@ -48,6 +48,8 @@ html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; f
 .tab-status.status-error { background: #ef5350; }
 .tab-status.status-explorer { background: #ab47bc; }
 .tab-status.status-exited { background: #555; }
+.tab-status.status-reconnecting { background: #ffa726; animation: pulse 0.8s infinite; }
+.tab-status.status-disconnected { background: #ef5350; }
 .tab-status.status-retrying { background: #f59e0b; animation: pulse 1.5s infinite; }
 .tab-status.status-failed { background: #ef5350; }
 
@@ -534,6 +536,13 @@ html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; f
 }
 #check-update-btn:hover { background: #1a1a2e; color: #ccd6f6; border-color: #4fc3f7; }
 #check-update-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Cost indicator */
+.cost-indicator {
+  color: #4fc3f7;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Help button */
 .tab-bar-spacer { flex: 1; }
@@ -1395,3 +1404,28 @@ kbd {
   100% { box-shadow: inset 0 0 0 0 rgba(255,215,0,0); }
 }
 .tab-done-shimmer { animation: doneShimmer 0.3s ease-out; }
+
+/* --- Session Mood Indicators --- */
+.dash-mood {
+  font-size: 12px;
+  line-height: 1;
+  margin-right: 2px;
+  cursor: default;
+  transition: transform 0.2s;
+}
+.dash-mood:hover { transform: scale(1.3); }
+
+/* --- Recipe Menu --- */
+.recipe-menu { min-width: 220px; }
+.recipe-menu .ctx-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #8888aa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #2a2a4a;
+}
+.recipe-menu .ctx-item small {
+  color: #6b7280;
+  font-size: 11px;
+}

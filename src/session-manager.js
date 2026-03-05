@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { WorktreeManager } = require('./worktree-manager');
+const { Logger } = require('./logger');
 
 class SessionManager {
   constructor(mainWindow) {
@@ -35,7 +36,7 @@ class SessionManager {
         execSync('git rev-parse --git-dir', { cwd: resolvedCwd, encoding: 'utf8', timeout: 3000 });
         useWorktree = true;
       } catch (e) {
-        // Not a git repo, skip worktree
+        Logger.info('session-manager', 'createSession', `Not a git repo at ${resolvedCwd}, skipping worktree`);
       }
     }
 
@@ -353,7 +354,7 @@ class SessionManager {
         const cmd = os.platform() === 'win32' ? `where ${name}` : `which ${name}`;
         result = execSync(cmd, { encoding: 'utf8' }).trim().split('\n')[0];
       } catch (e) {
-        // hope it's in PATH at runtime
+        Logger.info('session-manager', '_findExecutable', `Could not resolve ${name} via shell, hoping it's in PATH`);
       }
     }
     this._executableCache[name] = result;

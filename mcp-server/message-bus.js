@@ -1,8 +1,9 @@
 class MessageBus {
-  constructor() {
+  constructor({ maxInboxSize = 100 } = {}) {
     this.messages = new Map(); // sessionId -> message[]
     this.results = new Map();  // sessionId -> result
     this.nextMsgId = 1;
+    this.maxInboxSize = maxInboxSize;
   }
 
   send(fromId, toId, message, priority = 'normal', { type, subject, data } = {}) {
@@ -24,7 +25,14 @@ class MessageBus {
     if (!this.messages.has(toId)) {
       this.messages.set(toId, []);
     }
-    this.messages.get(toId).push(msg);
+    const inbox = this.messages.get(toId);
+    inbox.push(msg);
+
+    // Evict oldest messages when inbox exceeds cap
+    if (inbox.length > this.maxInboxSize) {
+      inbox.splice(0, inbox.length - this.maxInboxSize);
+    }
+
     return msg;
   }
 
@@ -67,6 +75,19 @@ class MessageBus {
 
   getResult(sessionId) {
     return this.results.get(sessionId) || null;
+  }
+
+  // Prune all inboxes: evict oldest messages beyond maxInboxSize
+  prune() {
+    let pruned = 0;
+    for (const [, inbox] of this.messages) {
+      if (inbox.length > this.maxInboxSize) {
+        const excess = inbox.length - this.maxInboxSize;
+        inbox.splice(0, excess);
+        pruned += excess;
+      }
+    }
+    return pruned;
   }
 }
 

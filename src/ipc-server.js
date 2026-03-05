@@ -7,6 +7,8 @@ const { EventBus } = require('./event-bus');
 const { ReviewManager } = require('./review-manager');
 const { ConsensusManager } = require('./consensus-manager');
 const { SessionMemory } = require('./session-memory');
+const { KnowledgeGraph } = require('./knowledge-graph');
+const { Logger } = require('./logger');
 
 class IpcServer {
   constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, onSpawnRequest }) {
@@ -22,6 +24,7 @@ class IpcServer {
     this.spawnedWorkers = new Set(); // track worker session IDs
     this.heartbeats = new Map(); // sessionId -> { timestamp }
     this.knowledgeBase = null; // initialized when first session provides a cwd
+    this.knowledgeGraph = null; // initialized alongside knowledgeBase
     this.snippets = new Map(); // snippetId -> { filePath, startLine, endLine, label, from }
     this.snippetId = 0;
     // Main branch: session stats (connectedAt, messagesSent, messagesReceived, toolCalls)
@@ -34,6 +37,11 @@ class IpcServer {
     // W12: code review + consensus
     this.reviewManager = new ReviewManager();
     this.consensusManager = new ConsensusManager();
+    // Adaptive templates: per-session tool overrides
+    this.toolOverrides = new Map(); // sessionId -> { added: Set, removed: Set }
+    // Emergent task discovery: proposals
+    this.proposals = []; // { id, proposer, title, description, justification, urgency, status, comment, taskId, timestamp }
+    this.nextProposalId = 0;
     // Persistent session memory
     this.sessionMemory = new SessionMemory();
 
@@ -111,17 +119,20 @@ class IpcServer {
         }
       });
 
-      socket.on('error', () => {
+      socket.on('error', (err) => {
         if (sessionId) {
+          Logger.warn('ipc-server', 'socket.error', `Socket error for ${sessionId}: ${err.message}`);
           this.clients.delete(sessionId);
           if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
           this.eventBus.unsubscribeAll(sessionId);
+          // Attempt reconnection with exponential backoff
+          this._attemptReconnect(sessionId);
         }
       });
     });
 
     this.server.listen(ipcPath, () => {
-      console.log(`IPC server listening on ${ipcPath}`);
+      Logger.info('ipc-server', 'start', `IPC server listening on ${ipcPath}`);
     });
 
     this.server.on('error', (err) => {
@@ -688,6 +699,67 @@ class IpcServer {
         break;
       }
 
+      // --- Knowledge Graph ---
+      case 'kg_add_entity': {
+        if (!this.knowledgeGraph) this._initKnowledgeBase();
+        if (this.knowledgeGraph) {
+          const entityId = this.knowledgeGraph.addEntity(msg.entityType, msg.name, msg.properties, msg.sessionId);
+          this._reply(socket, { type: 'kg_entity_added', entityId, requestId: msg.requestId });
+        } else {
+          this._reply(socket, { type: 'kg_entity_added', entityId: null, error: 'No project directory set', requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'kg_add_relationship': {
+        if (!this.knowledgeGraph) this._initKnowledgeBase();
+        if (this.knowledgeGraph) {
+          const relId = this.knowledgeGraph.addRelationship(msg.fromEntity, msg.toEntity, msg.relType, msg.properties, msg.sessionId);
+          this._reply(socket, { type: 'kg_relationship_added', relId, requestId: msg.requestId });
+        } else {
+          this._reply(socket, { type: 'kg_relationship_added', relId: null, error: 'No project directory set', requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'kg_query': {
+        if (!this.knowledgeGraph) this._initKnowledgeBase();
+        if (this.knowledgeGraph) {
+          let result;
+          if (msg.entityId) {
+            result = this.knowledgeGraph.queryRelationships(msg.entityId);
+          } else {
+            result = this.knowledgeGraph.queryEntities({
+              type: msg.entityType,
+              namePattern: msg.namePattern,
+              sessionId: msg.filterSessionId,
+            });
+          }
+          this._reply(socket, { type: 'kg_query_result', result, requestId: msg.requestId });
+        } else {
+          this._reply(socket, { type: 'kg_query_result', result: [], requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'kg_traverse': {
+        if (!this.knowledgeGraph) this._initKnowledgeBase();
+        const traversal = this.knowledgeGraph
+          ? this.knowledgeGraph.traverse(msg.entityId, msg.maxDepth || 2)
+          : { entities: [], relationships: [] };
+        this._reply(socket, { type: 'kg_traversal', ...traversal, requestId: msg.requestId });
+        break;
+      }
+
+      case 'kg_export': {
+        if (!this.knowledgeGraph) this._initKnowledgeBase();
+        const graph = this.knowledgeGraph
+          ? this.knowledgeGraph.exportGraph()
+          : { entities: [], relationships: [] };
+        this._reply(socket, { type: 'kg_graph', ...graph, requestId: msg.requestId });
+        break;
+      }
+
       // --- Context Handoffs ---
       case 'request_handoff': {
         // Send message to target session asking it to summarize
@@ -810,7 +882,7 @@ class IpcServer {
           let baseBranch = 'master';
           try {
             baseBranch = execSync(`git rev-parse --abbrev-ref ${branch}@{upstream}`, opts).trim();
-          } catch (e) { /* no upstream */ }
+          } catch (e) { Logger.info('ipc-server', 'query_git_status', `No upstream for branch: ${e.message}`); }
           // Changed files
           const statusRaw = execSync('git status --porcelain', opts).trim();
           const changedFiles = statusRaw ? statusRaw.split('\n').map(line => ({
@@ -824,7 +896,7 @@ class IpcServer {
             const parts = counts.split(/\s+/);
             ahead = parseInt(parts[0]) || 0;
             behind = parseInt(parts[1]) || 0;
-          } catch (e) { /* ignore */ }
+          } catch (e) { Logger.info('ipc-server', 'query_git_status', `Could not get ahead/behind counts: ${e.message}`); }
           this._reply(socket, {
             type: 'git_status',
             branch, baseBranch, changedFiles, ahead, behind,
@@ -1106,6 +1178,174 @@ class IpcServer {
         break;
       }
 
+      // --- Adaptive Templates ---
+      case 'promote_session': {
+        // Lead-only check
+        const promoterSession = this.sessionManager.getSessionInfo(msg.requestedBy);
+        if (!promoterSession || !promoterSession.isLead) {
+          this._reply(socket, { type: 'promoted', error: 'Only the lead session can promote sessions', requestId: msg.requestId });
+          break;
+        }
+        const overrides = this.toolOverrides.get(msg.targetSessionId) || { added: new Set(), removed: new Set() };
+        for (const tool of msg.addTools) {
+          overrides.added.add(tool);
+          overrides.removed.delete(tool); // un-demote if previously removed
+        }
+        this.toolOverrides.set(msg.targetSessionId, overrides);
+        // Push overrides to the target session's MCP server
+        const promoteSocket = this.clients.get(msg.targetSessionId);
+        if (promoteSocket) {
+          this._reply(promoteSocket, {
+            type: 'tool_overrides_update',
+            added: [...overrides.added],
+            removed: [...overrides.removed],
+          });
+        }
+        this._reply(socket, { type: 'promoted', requestId: msg.requestId });
+        break;
+      }
+
+      case 'demote_session': {
+        const demoterSession = this.sessionManager.getSessionInfo(msg.requestedBy);
+        if (!demoterSession || !demoterSession.isLead) {
+          this._reply(socket, { type: 'demoted', error: 'Only the lead session can demote sessions', requestId: msg.requestId });
+          break;
+        }
+        const dOverrides = this.toolOverrides.get(msg.targetSessionId) || { added: new Set(), removed: new Set() };
+        for (const tool of msg.removeTools) {
+          dOverrides.removed.add(tool);
+          dOverrides.added.delete(tool); // un-promote if previously added
+        }
+        this.toolOverrides.set(msg.targetSessionId, dOverrides);
+        const demoteSocket = this.clients.get(msg.targetSessionId);
+        if (demoteSocket) {
+          this._reply(demoteSocket, {
+            type: 'tool_overrides_update',
+            added: [...dOverrides.added],
+            removed: [...dOverrides.removed],
+          });
+        }
+        this._reply(socket, { type: 'demoted', requestId: msg.requestId });
+        break;
+      }
+
+      case 'request_promotion': {
+        // Find lead session and send a message
+        const sessions = this.sessionManager.listSessions();
+        const lead = sessions.find(s => s.isLead);
+        if (!lead) {
+          this._reply(socket, { type: 'promotion_requested', error: 'No lead session found', requestId: msg.requestId });
+          break;
+        }
+        const leadSocket = this.clients.get(lead.id);
+        if (leadSocket) {
+          this._reply(leadSocket, {
+            type: 'message',
+            from: msg.sessionId,
+            message: `[PROMOTION REQUEST] Session ${msg.sessionId} requests tools: [${msg.tools.join(', ')}]. Reason: ${msg.reason}. Use promote_session to grant.`,
+            priority: 'urgent',
+          });
+        }
+        this._reply(socket, { type: 'promotion_requested', requestId: msg.requestId });
+        break;
+      }
+
+      // --- Emergent Task Discovery ---
+      case 'propose_task': {
+        const proposalId = String(++this.nextProposalId);
+        const proposal = {
+          id: proposalId,
+          proposer: msg.proposer,
+          title: msg.title,
+          description: msg.description,
+          justification: msg.justification,
+          urgency: msg.urgency,
+          status: 'pending',
+          comment: null,
+          taskId: null,
+          timestamp: Date.now(),
+        };
+        this.proposals.push(proposal);
+        // Notify lead
+        const allSessions = this.sessionManager.listSessions();
+        const leadSession = allSessions.find(s => s.isLead);
+        if (leadSession) {
+          const lSocket = this.clients.get(leadSession.id);
+          if (lSocket) {
+            this._reply(lSocket, {
+              type: 'message',
+              from: msg.proposer,
+              message: `[TASK PROPOSAL #${proposalId}] "${msg.title}" (${msg.urgency} urgency)\n  ${msg.description}\n  Justification: ${msg.justification}\n  Use review_proposal to approve/reject.`,
+              priority: msg.urgency === 'high' ? 'urgent' : 'normal',
+            });
+          }
+        }
+        this._reply(socket, { type: 'proposal_created', proposalId, requestId: msg.requestId });
+        break;
+      }
+
+      case 'list_proposals': {
+        let filtered = this.proposals;
+        if (msg.status) {
+          filtered = filtered.filter(p => p.status === msg.status);
+        }
+        this._reply(socket, { type: 'proposals_listed', proposals: filtered, requestId: msg.requestId });
+        break;
+      }
+
+      case 'review_proposal': {
+        const reviewerSess = this.sessionManager.getSessionInfo(msg.reviewedBy);
+        if (!reviewerSess || !reviewerSess.isLead) {
+          this._reply(socket, { type: 'proposal_reviewed', error: 'Only the lead session can review proposals', requestId: msg.requestId });
+          break;
+        }
+        const proposal = this.proposals.find(p => p.id === msg.proposalId);
+        if (!proposal) {
+          this._reply(socket, { type: 'proposal_reviewed', error: `Proposal #${msg.proposalId} not found`, requestId: msg.requestId });
+          break;
+        }
+        if (proposal.status !== 'pending') {
+          this._reply(socket, { type: 'proposal_reviewed', error: `Proposal #${msg.proposalId} already ${proposal.status}`, requestId: msg.requestId });
+          break;
+        }
+        proposal.status = msg.action === 'approve' ? 'approved' : 'rejected';
+        proposal.comment = msg.comment || null;
+
+        let taskId = null;
+        if (msg.action === 'approve') {
+          // Auto-push to task queue
+          const priorityMap = { high: 1, medium: 3, low: 5 };
+          taskId = this.taskQueue.push({
+            title: proposal.title,
+            description: proposal.description,
+            priority: priorityMap[proposal.urgency] || 3,
+            createdBy: proposal.proposer,
+          });
+          proposal.taskId = taskId;
+          if (this.sessionManager.mainWindow) {
+            this.sessionManager.mainWindow.webContents.send('tasks:updated', { tasks: this.taskQueue.list() });
+          }
+        }
+
+        // Notify the proposer
+        const proposerSocket = this.clients.get(proposal.proposer);
+        if (proposerSocket) {
+          const action = msg.action === 'approve' ? 'APPROVED' : 'REJECTED';
+          let notifMsg = `[PROPOSAL ${action}] Your proposal #${msg.proposalId} "${proposal.title}" was ${action.toLowerCase()}.`;
+          if (taskId) notifMsg += ` Created task #${taskId}.`;
+          if (msg.comment) notifMsg += ` Comment: ${msg.comment}`;
+          this._reply(proposerSocket, {
+            type: 'message',
+            from: msg.reviewedBy,
+            message: notifMsg,
+            priority: 'normal',
+          });
+        }
+
+        this._reply(socket, { type: 'proposal_reviewed', proposalId: msg.proposalId, action: msg.action, taskId, requestId: msg.requestId });
+        break;
+      }
+
       case 'heartbeat': {
         this.heartbeats.set(msg.sessionId, { timestamp: msg.timestamp });
         if (this.sessionManager.mainWindow) {
@@ -1142,7 +1382,52 @@ class IpcServer {
     if (leadSession && leadSession.cwd) {
       const { KnowledgeBase } = require('./knowledge-base');
       this.knowledgeBase = new KnowledgeBase(leadSession.cwd);
+      if (!this.knowledgeGraph) {
+        this.knowledgeGraph = new KnowledgeGraph(leadSession.cwd);
+      }
     }
+  }
+
+  // Exponential backoff reconnection for disconnected sessions
+  _attemptReconnect(sessionId) {
+    if (!this._reconnectAttempts) this._reconnectAttempts = new Map();
+    const attempts = (this._reconnectAttempts.get(sessionId) || 0) + 1;
+    this._reconnectAttempts.set(sessionId, attempts);
+
+    if (attempts > 3) {
+      Logger.warn('ipc-server', '_attemptReconnect', `Session ${sessionId} disconnected after 3 failed reconnection attempts`);
+      this._reconnectAttempts.delete(sessionId);
+      // Update session status to disconnected
+      this.sessionManager.updateStatus(sessionId, 'disconnected');
+      return;
+    }
+
+    // Exponential backoff: 1s, 2s, 4s (capped at 30s)
+    const delay = Math.min(1000 * Math.pow(2, attempts - 1), 30000);
+    Logger.info('ipc-server', '_attemptReconnect', `Reconnection attempt ${attempts}/3 for ${sessionId} in ${delay}ms`);
+
+    // Update status to reconnecting
+    this.sessionManager.updateStatus(sessionId, 'reconnecting');
+
+    setTimeout(() => {
+      // Check if the session already reconnected on its own
+      if (this.clients.has(sessionId)) {
+        Logger.info('ipc-server', '_attemptReconnect', `Session ${sessionId} already reconnected`);
+        this._reconnectAttempts.delete(sessionId);
+        return;
+      }
+
+      // Check if session still exists (wasn't closed)
+      const session = this.sessionManager.getSessionInfo(sessionId);
+      if (!session) {
+        this._reconnectAttempts.delete(sessionId);
+        return;
+      }
+
+      // Try again — the MCP server process should reconnect itself;
+      // if it hasn't by now, try the next backoff interval
+      this._attemptReconnect(sessionId);
+    }, delay);
   }
 
   // W10: publish event to all matching subscribers
@@ -1166,7 +1451,7 @@ class IpcServer {
     try {
       socket.write(JSON.stringify(data) + '\n');
     } catch (e) {
-      // Socket may have closed
+      Logger.error('ipc-server', '_reply', `Failed to write to socket: ${e.message}`);
     }
   }
 

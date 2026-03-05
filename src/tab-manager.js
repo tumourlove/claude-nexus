@@ -35,6 +35,8 @@ export class TabManager {
     // Pane element
     const termEl = document.createElement('div');
     termEl.className = type === 'dashboard' ? 'dashboard-pane' : 'terminal-pane';
+    termEl.setAttribute('role', 'tabpanel');
+    termEl.setAttribute('aria-label', `${label} panel`);
     termEl.style.display = 'none';
     this.container.appendChild(termEl);
 
@@ -43,6 +45,10 @@ export class TabManager {
     const tabEl = document.createElement('div');
     tabEl.className = 'tab tab-enter';
     tabEl.dataset.tabId = id;
+    tabEl.setAttribute('role', 'tab');
+    tabEl.setAttribute('aria-selected', 'false');
+    tabEl.setAttribute('aria-label', `${label} — idle`);
+    tabEl.setAttribute('tabindex', '-1');
     tabEl.style.setProperty('--session-color', sessionColor);
     tabEl.style.borderLeft = `3px solid ${sessionColor}`;
     tabEl.innerHTML = `
@@ -194,8 +200,11 @@ export class TabManager {
     if (!tab) return;
 
     for (const [tid, t] of this.tabs) {
-      t.termEl.style.display = tid === id ? 'block' : 'none';
-      t.tabEl.classList.toggle('active', tid === id);
+      const isActive = tid === id;
+      t.termEl.style.display = isActive ? 'block' : 'none';
+      t.tabEl.classList.toggle('active', isActive);
+      t.tabEl.setAttribute('aria-selected', String(isActive));
+      t.tabEl.setAttribute('tabindex', isActive ? '0' : '-1');
     }
 
     this.activeTabId = id;
@@ -259,6 +268,7 @@ export class TabManager {
     if (!tab) return;
     const statusEl = tab.tabEl.querySelector('.tab-status');
     statusEl.className = `tab-status status-${status}`;
+    tab.tabEl.setAttribute('aria-label', `${tab.label} — ${status}`);
     // Golden shimmer when a tab completes
     if (status === 'done') {
       tab.tabEl.classList.add('tab-done-shimmer');
@@ -273,6 +283,8 @@ export class TabManager {
     if (!tab) return;
     tab.label = label;
     tab.tabEl.querySelector('.tab-label').textContent = label;
+    const status = tab.tabEl.querySelector('.tab-status')?.className.replace('tab-status status-', '') || 'idle';
+    tab.tabEl.setAttribute('aria-label', `${label} — ${status}`);
   }
 
   incrementBadge(id) {
@@ -433,6 +445,8 @@ export class TabManager {
       { label: 'Duplicate Tab', action: () => this._duplicateTab(tabId) },
       { label: 'Copy Session ID', action: () => { navigator.clipboard.writeText(tabId); } },
       { divider: true },
+      { label: 'Spawn from Recipe...', action: () => this._spawnFromRecipe() },
+      { divider: true },
       { label: 'Close Other Tabs', action: () => this._closeOtherTabs(tabId) },
       { label: 'Close Tab', action: () => this.closeTab(tabId) },
     ];
@@ -505,5 +519,49 @@ export class TabManager {
     tab.term.options.fontSize = DEFAULT_FONT_SIZE;
     tab.fitAddon.fit();
     window.nexus.resizeTerminal(this.activeTabId, tab.term.cols, tab.term.rows);
+  }
+
+  // --- Session Recipes ---
+  setRecipes(recipes) {
+    this._recipes = recipes || [];
+  }
+
+  _spawnFromRecipe() {
+    const recipes = this._recipes || [];
+    if (recipes.length === 0) {
+      alert('No recipes found. Place a .nexus-recipe.json file in your project root.');
+      return;
+    }
+    this._showRecipeMenu(recipes);
+  }
+
+  _showRecipeMenu(recipes) {
+    this._dismissContextMenu();
+    const menu = document.createElement('div');
+    menu.className = 'tab-context-menu recipe-menu';
+
+    const header = document.createElement('div');
+    header.className = 'ctx-header';
+    header.textContent = 'Spawn from Recipe';
+    menu.appendChild(header);
+
+    for (const recipe of recipes) {
+      const el = document.createElement('div');
+      el.className = 'ctx-item';
+      el.innerHTML = `<strong>${recipe.name}</strong><br><small>${recipe.description || ''}</small>`;
+      el.addEventListener('click', () => {
+        this._dismissContextMenu();
+        this.createTab(recipe.name, {
+          template: recipe.template,
+          initialPrompt: recipe.prompt,
+        });
+      });
+      menu.appendChild(el);
+    }
+
+    menu.style.left = `${Math.min(100, window.innerWidth - 220)}px`;
+    menu.style.top = '40px';
+    document.body.appendChild(menu);
+    this._contextMenu = menu;
   }
 }

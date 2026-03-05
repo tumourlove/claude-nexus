@@ -23,9 +23,11 @@ const TEMPLATE_TOOLS = {
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet', 'get_task_graph',
     'kb_search', 'kb_list',
+    'kg_add_entity', 'kg_add_relationship', 'kg_query', 'kg_traverse', 'kg_export',
     'structured_message', 'context_estimate',
     'subscribe', 'unsubscribe', 'publish',
     'recall', 'get_lineage',
+    'request_promotion', 'propose_task', 'list_proposals',
   ]),
   reviewer: new Set([
     'list_sessions', 'send_message', 'read_messages', 'report_result',
@@ -35,19 +37,23 @@ const TEMPLATE_TOOLS = {
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet', 'get_task_graph',
     'kb_search', 'kb_list', 'kb_add', 'share_snippet',
+    'kg_add_entity', 'kg_add_relationship', 'kg_query', 'kg_traverse', 'kg_export',
     'structured_message', 'context_estimate',
     'subscribe', 'unsubscribe', 'publish',
     'remember', 'recall', 'get_lineage',
+    'request_promotion', 'propose_task', 'list_proposals',
   ]),
   explorer: new Set([
     'list_sessions', 'read_messages', 'report_result',
     'read_session_history', 'search_across_sessions',
     'scratchpad_get', 'scratchpad_list', 'batch_scratchpad', 'session_info',
     'list_tasks', 'get_snippet', 'get_task_graph', 'kb_search', 'kb_list',
+    'kg_query', 'kg_traverse', 'kg_export',
     'get_worker_diff',
     'structured_message', 'context_estimate',
     'subscribe', 'unsubscribe',
     'recall', 'get_lineage',
+    'request_promotion', 'propose_task', 'list_proposals',
   ]),
 };
 
@@ -124,6 +130,9 @@ function sendIpc(data) {
   return false;
 }
 
+// Per-session tool overrides (pushed from main process via IPC)
+const toolOverrides = { added: new Set(), removed: new Set() };
+
 // Collected worker results for wait_for_workers
 const pendingResults = [];
 let resultWaiters = []; // resolve callbacks waiting for results
@@ -184,6 +193,11 @@ function handleIpcMessage(msg) {
       sendIpc({ type: 'ack', messageId: msg.messageId });
     }
   }
+  // Tool override updates (from promote/demote)
+  if (msg.type === 'tool_overrides_update') {
+    toolOverrides.added = new Set(msg.added || []);
+    toolOverrides.removed = new Set(msg.removed || []);
+  }
   // W10: event handling
   if (msg.type === 'event') {
     messageBus.send(
@@ -204,6 +218,15 @@ const server = new McpServer({
 const originalTool = server.tool.bind(server);
 server.tool = function(name, description, schema, handler) {
   const wrappedHandler = async (args) => {
+    // Check overrides first: explicit remove blocks, explicit add grants
+    if (toolOverrides.removed.has(name)) {
+      return {
+        content: [{ type: 'text', text: `Tool "${name}" has been revoked from this session.` }],
+      };
+    }
+    if (toolOverrides.added.has(name)) {
+      return handler(args); // promoted — skip template check
+    }
     const allowed = TEMPLATE_TOOLS[SESSION_TEMPLATE];
     if (allowed !== null && !allowed.has(name)) {
       return {
@@ -1120,6 +1143,131 @@ server.tool(
   }
 );
 
+// --- Knowledge Graph Tools ---
+
+server.tool(
+  'kg_add_entity',
+  'Add an entity to the knowledge graph (file, function, concept, decision, pattern, bug)',
+  {
+    type: z.enum(['file', 'function', 'concept', 'decision', 'pattern', 'bug']).describe('Entity type'),
+    name: z.string().describe('Entity name'),
+    properties: z.record(z.string(), z.any()).optional().describe('Additional properties'),
+  },
+  async ({ type, name, properties }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'kg_add_entity',
+        entityType: type,
+        name,
+        properties: properties || {},
+        sessionId: SESSION_ID,
+      });
+      return {
+        content: [{ type: 'text', text: `Entity added: ${response.entityId} (${type}: ${name})` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kg_add_relationship',
+  'Add a relationship between two entities in the knowledge graph',
+  {
+    from_entity: z.string().describe('Source entity ID'),
+    to_entity: z.string().describe('Target entity ID'),
+    type: z.enum(['depends-on', 'conflicts-with', 'implements', 'calls', 'related-to']).describe('Relationship type'),
+    properties: z.record(z.string(), z.any()).optional().describe('Additional properties'),
+  },
+  async ({ from_entity, to_entity, type, properties }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'kg_add_relationship',
+        fromEntity: from_entity,
+        toEntity: to_entity,
+        relType: type,
+        properties: properties || {},
+        sessionId: SESSION_ID,
+      });
+      if (response.relId) {
+        return {
+          content: [{ type: 'text', text: `Relationship added: ${response.relId} (${from_entity} --${type}--> ${to_entity})` }],
+        };
+      }
+      return { content: [{ type: 'text', text: 'Error: one or both entity IDs not found' }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kg_query',
+  'Query the knowledge graph for entities or relationships. Provide entity_id to get relationships, or use type/name_pattern to search entities.',
+  {
+    entity_type: z.enum(['file', 'function', 'concept', 'decision', 'pattern', 'bug']).optional().describe('Filter entities by type'),
+    name_pattern: z.string().optional().describe('Filter entities by name (substring match)'),
+    entity_id: z.string().optional().describe('Get all relationships for this entity'),
+  },
+  async ({ entity_type, name_pattern, entity_id }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'kg_query',
+        entityType: entity_type,
+        namePattern: name_pattern,
+        entityId: entity_id,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response.result, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kg_traverse',
+  'Traverse the knowledge graph from a starting entity, finding all connected entities within N hops',
+  {
+    entity_id: z.string().describe('Starting entity ID'),
+    max_depth: z.number().min(1).max(5).default(2).describe('Maximum traversal depth (1-5)'),
+  },
+  async ({ entity_id, max_depth }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'kg_traverse',
+        entityId: entity_id,
+        maxDepth: max_depth,
+      });
+      const summary = `Found ${response.entities?.length || 0} entities, ${response.relationships?.length || 0} relationships`;
+      return {
+        content: [{ type: 'text', text: `${summary}\n${JSON.stringify({ entities: response.entities, relationships: response.relationships }, null, 2)}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'kg_export',
+  'Export the full knowledge graph (all entities and relationships)',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({ type: 'kg_export' });
+      const summary = `Graph: ${response.entities?.length || 0} entities, ${response.relationships?.length || 0} relationships`;
+      return {
+        content: [{ type: 'text', text: `${summary}\n${JSON.stringify({ entities: response.entities, relationships: response.relationships }, null, 2)}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
 // --- Batch Scratchpad ---
 
 server.tool(
@@ -1606,6 +1754,161 @@ server.tool(
         `[${e.type}] ${new Date(e.timestamp).toISOString().slice(0, 16)} (${e.sessionId}) [${e.tags.join(', ')}]\n  ${e.content}`
       ).join('\n\n');
       return { content: [{ type: 'text', text: `${entries.length} related entries found:\n\n${formatted}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Adaptive Template Tools ---
+
+server.tool(
+  'promote_session',
+  'Grant additional tools to a session temporarily (lead-only). Use to upgrade a worker\'s capabilities dynamically.',
+  {
+    session_id: z.string().describe('Target session ID'),
+    add_tools: z.array(z.string()).describe('Tool names to grant'),
+  },
+  async ({ session_id, add_tools }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'promote_session',
+        targetSessionId: session_id,
+        addTools: add_tools,
+        requestedBy: SESSION_ID,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Promoted ${session_id}: granted [${add_tools.join(', ')}]` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'demote_session',
+  'Revoke tools from a session (lead-only). Use to restrict a worker\'s capabilities dynamically.',
+  {
+    session_id: z.string().describe('Target session ID'),
+    remove_tools: z.array(z.string()).describe('Tool names to revoke'),
+  },
+  async ({ session_id, remove_tools }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'demote_session',
+        targetSessionId: session_id,
+        removeTools: remove_tools,
+        requestedBy: SESSION_ID,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Demoted ${session_id}: revoked [${remove_tools.join(', ')}]` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'request_promotion',
+  'Request additional tool capabilities from the lead session. The lead will be notified and can approve or deny.',
+  {
+    tools: z.array(z.string()).describe('Tool names you need access to'),
+    reason: z.string().describe('Why you need these tools'),
+  },
+  async ({ tools, reason }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'request_promotion',
+        sessionId: SESSION_ID,
+        tools,
+        reason,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Promotion request sent to lead. Requested tools: [${tools.join(', ')}]` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Emergent Task Discovery Tools ---
+
+server.tool(
+  'propose_task',
+  'Propose a new task bottom-up. The lead session will be notified and can approve or reject. Approved proposals become real tasks in the queue.',
+  {
+    title: z.string().describe('Task title'),
+    description: z.string().describe('What needs to be done'),
+    justification: z.string().describe('Why this task is needed'),
+    urgency: z.enum(['low', 'medium', 'high']).default('medium').describe('How urgent is this task'),
+  },
+  async ({ title, description, justification, urgency }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'propose_task',
+        proposer: SESSION_ID,
+        title,
+        description,
+        justification,
+        urgency,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Task proposal #${response.proposalId} submitted: "${title}" (${urgency} urgency)` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'list_proposals',
+  'List task proposals with optional status filter.',
+  {
+    status: z.enum(['pending', 'approved', 'rejected']).optional().describe('Filter by proposal status'),
+  },
+  async ({ status }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'list_proposals',
+        status,
+      });
+      const proposals = response.proposals || [];
+      if (proposals.length === 0) {
+        return { content: [{ type: 'text', text: `No proposals found${status ? ` with status: ${status}` : ''}.` }] };
+      }
+      const formatted = proposals.map(p =>
+        `#${p.id} [${p.status}] "${p.title}" by ${p.proposer} (${p.urgency})\n  ${p.description}\n  Justification: ${p.justification}${p.comment ? `\n  Comment: ${p.comment}` : ''}`
+      ).join('\n\n');
+      return { content: [{ type: 'text', text: `${proposals.length} proposal(s):\n\n${formatted}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'review_proposal',
+  'Approve or reject a task proposal (lead-only). Approved proposals are automatically added to the task queue.',
+  {
+    proposal_id: z.string().describe('Proposal ID to review'),
+    action: z.enum(['approve', 'reject']).describe('Approve or reject the proposal'),
+    comment: z.string().optional().describe('Optional comment explaining the decision'),
+  },
+  async ({ proposal_id, action, comment }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_proposal',
+        proposalId: proposal_id,
+        action,
+        comment,
+        reviewedBy: SESSION_ID,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      let text = `Proposal #${proposal_id} ${action}d.`;
+      if (action === 'approve' && response.taskId) {
+        text += ` Created task #${response.taskId}.`;
+      }
+      return { content: [{ type: 'text', text }] };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
     }

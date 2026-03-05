@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('nexus', {
   onSessionProgress: (cb) => ipcRenderer.on('session:progress', (_e, data) => cb(data)),
   onChatMessage: (cb) => ipcRenderer.on('chat:message', (_e, data) => cb(data)),
 
+  // Recipes
+  loadRecipes: (projectPath) => ipcRenderer.invoke('app:load-recipes', { projectPath }),
+
   // Session actions
   duplicateSession: (id) => ipcRenderer.invoke('session:duplicate', { id }),
   getSessionInfo: (id) => ipcRenderer.invoke('session:info', { id }),

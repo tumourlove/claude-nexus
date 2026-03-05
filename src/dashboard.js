@@ -20,6 +20,8 @@ export class Dashboard {
     // Sparkline activity tracking: sessionId -> number[] (60 buckets, 1 per second)
     this._activityBuffers = new Map();
     this._sparklineInterval = null;
+    // Mood tracking: sessionId -> { mood, lastOutput }
+    this._moods = new Map();
     this._render();
     this._bindEvents();
     this._startSparklineUpdates();
@@ -37,7 +39,7 @@ export class Dashboard {
         </div>
       </div>
       <div class="dash-filter-toolbar" id="dash-filter-toolbar">
-        <input type="text" class="dash-filter-search" id="dash-filter-search" placeholder="Search sessions..." />
+        <input type="text" class="dash-filter-search" id="dash-filter-search" placeholder="Search sessions..." role="search" aria-label="Filter sessions" />
         <div class="dash-filter-status-btns" id="dash-filter-status-btns">
           <button class="dash-filter-btn active" data-status="all">All</button>
           <button class="dash-filter-btn" data-status="working">Active</button>
@@ -55,8 +57,10 @@ export class Dashboard {
         <span class="stat-item">Tasks: <strong id="stat-tasks">0</strong></span>
         <span class="stat-item">Fastest: <strong id="stat-fastest">—</strong></span>
         <span class="stat-item">Workers: <strong id="stat-workers">0</strong></span>
+        <span class="stat-item">Cost: <strong id="stat-cost">N/A</strong></span>
+        <span class="stat-item">Burn: <strong id="stat-burn-rate">—</strong></span>
       </div>
-      <div class="dash-cards" id="dash-cards">
+      <div class="dash-cards" id="dash-cards" role="grid" aria-label="Session cards">
         <div class="dashboard-empty">No sessions yet</div>
       </div>
       <div class="dash-results-panel" id="dash-results" style="display:none">
@@ -73,7 +77,7 @@ export class Dashboard {
       </div>
       <div class="dash-log-panel">
         <h3>Activity</h3>
-        <div class="dashboard-log" id="dash-log">
+        <div class="dashboard-log" id="dash-log" aria-live="polite">
           <div class="dashboard-empty">No activity yet</div>
         </div>
       </div>
@@ -205,6 +209,8 @@ export class Dashboard {
         buf.shift();
         buf.push(0);
       }
+      // Check for idle sessions -> "thinking" mood
+      this.checkIdleMoods();
       // Re-render sparklines in existing cards
       this._updateSparklines();
     }, 1000);
@@ -239,6 +245,56 @@ export class Dashboard {
     });
   }
 
+  // --- Mood Detection ---
+  static MOOD_PATTERNS = [
+    { mood: 'frustrated', icon: '\u{1F534}', patterns: /\b(error|failed|FAIL|ERR!|exception|fatal|panic|stderr)\b/i },
+    { mood: 'satisfied', icon: '\u{1F7E2}', patterns: /\b(PASS|passed|succeed|success|All tests|\u2713|\u2714)\b/i },
+    { mood: 'working', icon: '\u{1F527}', patterns: /\b(compiling|bundling|building|webpack|esbuild|tsc|compil)\b/i },
+    { mood: 'investigating', icon: '\u{1F50D}', patterns: /\b(searching|reading|exploring|scanning|analyzing|grep|find)\b/i },
+  ];
+
+  detectMood(id, text) {
+    const entry = this._moods.get(id) || { mood: 'neutral', lastOutput: Date.now() };
+    entry.lastOutput = Date.now();
+
+    for (const { mood, patterns } of Dashboard.MOOD_PATTERNS) {
+      if (patterns.test(text)) {
+        entry.mood = mood;
+        this._moods.set(id, entry);
+        this._updateMoodIndicator(id, entry.mood);
+        return;
+      }
+    }
+
+    this._moods.set(id, entry);
+  }
+
+  checkIdleMoods() {
+    const now = Date.now();
+    for (const [id, entry] of this._moods) {
+      if (now - entry.lastOutput > 10000 && entry.mood !== 'thinking') {
+        entry.mood = 'thinking';
+        this._updateMoodIndicator(id, 'thinking');
+      }
+    }
+  }
+
+  getMoodInfo(id) {
+    const entry = this._moods.get(id);
+    if (!entry) return { mood: 'neutral', icon: '\u{26AA}' };
+    const icons = { frustrated: '\u{1F534}', satisfied: '\u{1F7E2}', working: '\u{1F527}', investigating: '\u{1F50D}', thinking: '\u{1F4AD}', neutral: '\u{26AA}' };
+    return { mood: entry.mood, icon: icons[entry.mood] || '\u{26AA}' };
+  }
+
+  _updateMoodIndicator(id, mood) {
+    const el = this.container.querySelector(`.dash-card[data-id="${id}"] .dash-mood`);
+    if (!el) return;
+    const icons = { frustrated: '\u{1F534}', satisfied: '\u{1F7E2}', working: '\u{1F527}', investigating: '\u{1F50D}', thinking: '\u{1F4AD}', neutral: '\u{26AA}' };
+    el.textContent = icons[mood] || '\u{26AA}';
+    el.title = mood;
+    el.setAttribute('aria-label', `Mood: ${mood}`);
+  }
+
   updateSessions(sessions) {
     this._lastSessions = sessions;
     const el = this.container.querySelector('#dash-cards');
@@ -257,11 +313,13 @@ export class Dashboard {
 
     el.innerHTML = filtered.map(s => {
       const preview = this.previews.get(s.id) || [];
+      const moodInfo = this.getMoodInfo(s.id);
       return `
-        <div class="dash-card ${s.isLead ? 'dash-card-lead' : ''} dash-card-${s.status || 'idle'}" data-id="${s.id}">
+        <div class="dash-card ${s.isLead ? 'dash-card-lead' : ''} dash-card-${s.status || 'idle'}" data-id="${s.id}" role="gridcell" aria-label="${s.label || s.id} — ${s.status || 'idle'} — mood: ${moodInfo.mood}">
           <div class="dash-card-header">
             <span class="health-pulse ${s.health || 'unknown'}"></span>
             <span class="dash-card-status status-${s.status || 'idle'}"></span>
+            <span class="dash-mood" title="${moodInfo.mood}" aria-label="Mood: ${moodInfo.mood}">${moodInfo.icon}</span>
             <span class="dash-card-label">${s.label || s.id}</span>
             <span class="dash-card-template">${s.template || ''}</span>
             ${s.isLead ? '<span class="dash-card-lead-badge">LEAD</span>' : ''}
@@ -492,6 +550,17 @@ export class Dashboard {
   updateProgress(data) {
     if (!this._progress) this._progress = {};
     this._progress[data.id] = { message: data.message, percent: data.percent };
+  }
+
+  updateCost(aggregate) {
+    const costEl = document.getElementById('stat-cost');
+    const burnEl = document.getElementById('stat-burn-rate');
+    if (costEl) {
+      costEl.textContent = aggregate.totalCost > 0 ? `$${aggregate.totalCost.toFixed(2)}` : 'N/A';
+    }
+    if (burnEl) {
+      burnEl.textContent = aggregate.burnRate > 0.001 ? `$${aggregate.burnRate.toFixed(2)}/min` : '\u2014';
+    }
   }
 
   _escape(str) {

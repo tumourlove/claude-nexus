@@ -254,6 +254,17 @@ ipcMain.handle('app:startup-cwd', () => {
   return process.argv[2] || null;
 });
 
+// Load .nexus-recipe.json from a project directory
+ipcMain.handle('app:load-recipes', async (_e, { projectPath }) => {
+  try {
+    const recipePath = path.join(projectPath, '.nexus-recipe.json');
+    const content = fs.readFileSync(recipePath, 'utf-8');
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+});
+
 // Save clipboard image to temp file and return path
 ipcMain.handle('clipboard:save-image', async () => {
   const img = clipboard.readImage();

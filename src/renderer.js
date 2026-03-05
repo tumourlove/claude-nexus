@@ -2,10 +2,14 @@ import '@xterm/xterm/css/xterm.css';
 import { TabManager } from './tab-manager';
 import { ProjectPicker } from './project-picker';
 import { ChatPanel } from './chat-panel';
+import { RecipeLoader } from './recipe-loader';
+import { CostTracker } from './cost-tracker';
 
 const container = document.getElementById('terminal-container');
 const tabBar = document.getElementById('tab-bar');
 const tabManager = new TabManager(container, tabBar);
+const recipeLoader = new RecipeLoader();
+const costTracker = new CostTracker();
 
 // Chat panel
 const chatPanel = new ChatPanel();
@@ -200,11 +204,16 @@ async function startup() {
   const startupCwd = await window.nexus.getStartupCwd();
   if (startupCwd) {
     tabManager.createTab('Lead', { isLead: true, cwd: startupCwd });
+    // Load recipes from project
+    await recipeLoader.loadFromProject(startupCwd);
+    tabManager.setRecipes(recipeLoader.getRecipes());
   } else {
     const pickerEl = document.getElementById('project-picker');
     pickerEl.style.display = 'block';
-    new ProjectPicker(pickerEl, (projectPath) => {
+    new ProjectPicker(pickerEl, async (projectPath) => {
       tabManager.createTab('Lead', { isLead: true, cwd: projectPath });
+      await recipeLoader.loadFromProject(projectPath);
+      tabManager.setRecipes(recipeLoader.getRecipes());
     });
   }
 }
@@ -331,14 +340,50 @@ function _toggleNotificationHistory() {
 
 _initNotificationHistoryPanel();
 
+// --- Cost indicator in status bar ---
+function _initCostIndicator() {
+  const statusBar = document.getElementById('status-bar');
+  if (!statusBar) return;
+  const costEl = document.createElement('span');
+  costEl.id = 'cost-indicator';
+  costEl.className = 'cost-indicator';
+  costEl.title = 'Estimated session cost';
+  costEl.textContent = 'Cost: N/A';
+  // Insert after session-count
+  const sessionCount = document.getElementById('session-count');
+  if (sessionCount && sessionCount.nextSibling) {
+    statusBar.insertBefore(costEl, sessionCount.nextSibling);
+  } else {
+    statusBar.appendChild(costEl);
+  }
+
+  costTracker.onChange((agg) => {
+    const costText = agg.totalCost > 0 ? `$${agg.totalCost.toFixed(2)}` : 'N/A';
+    const burnText = agg.burnRate > 0.001 ? ` ($${agg.burnRate.toFixed(2)}/min)` : '';
+    costEl.textContent = `Cost: ${costText}${burnText}`;
+    costEl.title = `Input: ${agg.totalInputTokens.toLocaleString()} tokens | Output: ${agg.totalOutputTokens.toLocaleString()} tokens | ${agg.sessionCount} session(s)`;
+    // Also update dashboard if open
+    const dash = tabManager.getDashboard();
+    if (dash) dash.updateCost(agg);
+  });
+}
+_initCostIndicator();
+
 // --- Dashboard event-driven updates ---
 
-// Output previews -> dashboard cards + sparkline activity tracking
+// Output previews -> dashboard cards + sparkline activity tracking + cost tracking
 window.nexus.onOutputPreview(({ id, lines }) => {
   const dash = tabManager.getDashboard();
   if (dash) {
     dash.updatePreview(id, lines);
     dash.recordOutput(id);
+    // Mood detection from latest output lines
+    const text = lines.join(' ');
+    if (text.trim()) dash.detectMood(id, text);
+  }
+  // Feed lines to cost tracker for token/cost parsing
+  if (lines && lines.length > 0) {
+    costTracker.parseOutput(id, lines.join('\n'));
   }
 });
 
