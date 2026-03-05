@@ -12,8 +12,17 @@ export class Dashboard {
     };
     this._badges = new Map(); // sessionId -> Set of badge names
     this._taskStartTimes = new Map(); // sessionId -> timestamp
+    // Filtering & sorting state
+    this._filterText = '';
+    this._filterStatus = 'all';
+    this._sortBy = 'name';
+    this._lastSessions = [];
+    // Sparkline activity tracking: sessionId -> number[] (60 buckets, 1 per second)
+    this._activityBuffers = new Map();
+    this._sparklineInterval = null;
     this._render();
     this._bindEvents();
+    this._startSparklineUpdates();
   }
 
   _render() {
@@ -26,6 +35,21 @@ export class Dashboard {
           <button class="dash-btn" id="dash-update-claude-btn" title="Update Claude Code CLI">Update Claude</button>
           <button class="dash-btn" id="dash-update-nexus-btn" title="Check for Nexus updates">Update Nexus</button>
         </div>
+      </div>
+      <div class="dash-filter-toolbar" id="dash-filter-toolbar">
+        <input type="text" class="dash-filter-search" id="dash-filter-search" placeholder="Search sessions..." />
+        <div class="dash-filter-status-btns" id="dash-filter-status-btns">
+          <button class="dash-filter-btn active" data-status="all">All</button>
+          <button class="dash-filter-btn" data-status="working">Active</button>
+          <button class="dash-filter-btn" data-status="idle">Idle</button>
+          <button class="dash-filter-btn" data-status="done">Done</button>
+          <button class="dash-filter-btn" data-status="error">Error</button>
+        </div>
+        <select class="dash-sort-select" id="dash-sort-select">
+          <option value="name">Sort: Name</option>
+          <option value="time">Sort: Created</option>
+          <option value="status">Sort: Status</option>
+        </select>
       </div>
       <div class="dash-stats" id="dash-stats">
         <span class="stat-item">Tasks: <strong id="stat-tasks">0</strong></span>
@@ -88,15 +112,150 @@ export class Dashboard {
       if (!btn) return;
       this._handleCardAction(btn.dataset.action, btn.dataset.id);
     });
+
+    // Filter toolbar events
+    this.container.querySelector('#dash-filter-search').addEventListener('input', (e) => {
+      this._filterText = e.target.value.toLowerCase();
+      this._applyFilters();
+    });
+
+    this.container.querySelector('#dash-filter-status-btns').addEventListener('click', (e) => {
+      const btn = e.target.closest('.dash-filter-btn');
+      if (!btn) return;
+      this.container.querySelectorAll('.dash-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      this._filterStatus = btn.dataset.status;
+      this._applyFilters();
+    });
+
+    this.container.querySelector('#dash-sort-select').addEventListener('change', (e) => {
+      this._sortBy = e.target.value;
+      this._applyFilters();
+    });
+  }
+
+  _applyFilters() {
+    if (this._lastSessions.length > 0) {
+      this.updateSessions(this._lastSessions);
+    }
+  }
+
+  _filterAndSort(sessions) {
+    let filtered = sessions;
+
+    // Text filter
+    if (this._filterText) {
+      filtered = filtered.filter(s => {
+        const label = (s.label || s.id).toLowerCase();
+        return label.includes(this._filterText);
+      });
+    }
+
+    // Status filter
+    if (this._filterStatus !== 'all') {
+      filtered = filtered.filter(s => {
+        const status = s.status || 'idle';
+        if (this._filterStatus === 'working') return status === 'working' || status === 'in_progress';
+        if (this._filterStatus === 'error') return status === 'error' || status === 'failed';
+        return status === this._filterStatus;
+      });
+    }
+
+    // Sort
+    const statusOrder = ['working', 'in_progress', 'idle', 'done', 'error', 'failed', 'exited'];
+    filtered = [...filtered].sort((a, b) => {
+      if (this._sortBy === 'name') {
+        return (a.label || a.id).localeCompare(b.label || b.id);
+      } else if (this._sortBy === 'time') {
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      } else if (this._sortBy === 'status') {
+        return statusOrder.indexOf(a.status || 'idle') - statusOrder.indexOf(b.status || 'idle');
+      }
+      return 0;
+    });
+
+    return filtered;
+  }
+
+  // Sparkline: generate a color from session ID hash (same hue logic as tabs)
+  _sessionHue(id) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return Math.abs(hash) % 360;
+  }
+
+  _getActivityBuffer(id) {
+    if (!this._activityBuffers.has(id)) {
+      this._activityBuffers.set(id, new Array(60).fill(0));
+    }
+    return this._activityBuffers.get(id);
+  }
+
+  recordOutput(id) {
+    const buf = this._getActivityBuffer(id);
+    buf[buf.length - 1]++;
+  }
+
+  _startSparklineUpdates() {
+    this._sparklineInterval = setInterval(() => {
+      // Shift all buffers: drop oldest bucket, add a new 0 bucket
+      for (const [, buf] of this._activityBuffers) {
+        buf.shift();
+        buf.push(0);
+      }
+      // Re-render sparklines in existing cards
+      this._updateSparklines();
+    }, 1000);
+  }
+
+  _renderSparkline(id) {
+    const buf = this._getActivityBuffer(id);
+    const hue = this._sessionHue(id);
+    const color = `hsl(${hue}, 70%, 60%)`;
+    const max = Math.max(...buf, 1);
+    const w = 60;
+    const h = 20;
+    const points = buf.map((v, i) => {
+      const x = (i / (buf.length - 1)) * w;
+      const y = h - (v / max) * (h - 2) - 1;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    return `<svg class="dash-sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`;
+  }
+
+  _updateSparklines() {
+    const cards = this.container.querySelectorAll('.dash-card[data-id]');
+    cards.forEach(card => {
+      const id = card.dataset.id;
+      const sparkEl = card.querySelector('.dash-sparkline-wrap');
+      if (sparkEl) {
+        sparkEl.innerHTML = this._renderSparkline(id);
+      }
+    });
   }
 
   updateSessions(sessions) {
+    this._lastSessions = sessions;
     const el = this.container.querySelector('#dash-cards');
     if (!sessions || sessions.length === 0) {
       el.innerHTML = '<div class="dashboard-empty">No sessions yet</div>';
       return;
     }
-    el.innerHTML = sessions.map(s => {
+
+    const filtered = this._filterAndSort(sessions);
+
+    if (filtered.length === 0) {
+      el.innerHTML = '<div class="dashboard-empty">No sessions match filters</div>';
+      this.updateStats(sessions);
+      return;
+    }
+
+    el.innerHTML = filtered.map(s => {
       const preview = this.previews.get(s.id) || [];
       return `
         <div class="dash-card ${s.isLead ? 'dash-card-lead' : ''} dash-card-${s.status || 'idle'}" data-id="${s.id}">
@@ -107,6 +266,7 @@ export class Dashboard {
             <span class="dash-card-template">${s.template || ''}</span>
             ${s.isLead ? '<span class="dash-card-lead-badge">LEAD</span>' : ''}
             ${s.retryCount ? `<span class="retry-badge">retry ${s.retryCount}/${s.maxRetries}</span>` : ''}
+            <span class="dash-sparkline-wrap">${this._renderSparkline(s.id)}</span>
             <span class="dash-card-cwd" title="${s.cwd || ''}">${this._shortenPath(s.cwd)}</span>
           </div>
           ${this.getBadges(s.id).length ? `<div class="session-badges">${this.getBadges(s.id).map(b => `<span class="badge">${b}</span>`).join('')}</div>` : ''}
@@ -349,6 +509,11 @@ export class Dashboard {
   }
 
   dispose() {
+    if (this._sparklineInterval) {
+      clearInterval(this._sparklineInterval);
+      this._sparklineInterval = null;
+    }
+    this._activityBuffers.clear();
     this.previews.clear();
     this.results.length = 0;
     this.container.innerHTML = '';

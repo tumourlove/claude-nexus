@@ -168,8 +168,22 @@ window.nexus.onSessionStatus(({ id, status }) => {
     const dash = tabManager.getDashboard();
     if (dash) dash.recordTaskStart(id);
   }
+  // Ambient breathing effect on terminal pane
+  _updateBreathingEffect(id, status);
   refreshDashboard();
 });
+
+function _updateBreathingEffect(id, status) {
+  const tab = tabManager.tabs.get(id);
+  if (!tab || !tab.termEl) return;
+  const pane = tab.termEl;
+  pane.classList.remove('breathing-active', 'breathing-error');
+  if (status === 'working' || status === 'in_progress') {
+    pane.classList.add('breathing-active');
+  } else if (status === 'error' || status === 'failed') {
+    pane.classList.add('breathing-error');
+  }
+}
 
 // Handle MCP-initiated session spawns
 window.nexus.onSpawnRequested(({ id, label, cwd, initialPrompt, template }) => {
@@ -196,41 +210,136 @@ async function startup() {
 }
 startup();
 
-// Toast notifications
+// Toast notifications with pause-on-hover, close button, stacking, and history
 const toastContainer = document.getElementById('toast-container');
-function showToast(body, type = 'info') {
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<strong>${type === 'success' ? 'Achievement' : 'Notice'}</strong><span>${body}</span>`;
-  toastContainer.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add('show'));
-  setTimeout(() => {
-    toast.classList.remove('show');
-    toast.addEventListener('transitionend', () => toast.remove());
-    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
-  }, 4000);
+const notificationHistory = [];
+const MAX_NOTIFICATION_HISTORY = 20;
+
+function _addToHistory(title, body, type) {
+  notificationHistory.push({ title, body, type, timestamp: Date.now() });
+  if (notificationHistory.length > MAX_NOTIFICATION_HISTORY) notificationHistory.shift();
+  _updateHistoryBadge();
 }
-window.nexus.onToast(({ title, body, type }) => {
+
+function _updateHistoryBadge() {
+  const badge = document.getElementById('notif-history-badge');
+  if (badge) {
+    badge.textContent = notificationHistory.length;
+    badge.style.display = notificationHistory.length > 0 ? 'inline' : 'none';
+  }
+}
+
+function _createToast(title, body, type) {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<strong>${title}</strong><span>${body}</span>`;
+  toast.innerHTML = `<div class="toast-header"><strong>${title}</strong><span class="toast-close">&times;</span></div><span>${body}</span>`;
   toastContainer.appendChild(toast);
-  // Trigger animation
+
+  // Close button
+  toast.querySelector('.toast-close').addEventListener('click', () => {
+    _dismissToast(toast);
+  });
+
+  // Auto-dismiss with pause-on-hover
+  let dismissTimer = null;
+  let remaining = 5000;
+  let startTime = Date.now();
+
+  function startTimer() {
+    startTime = Date.now();
+    dismissTimer = setTimeout(() => _dismissToast(toast), remaining);
+  }
+
+  toast.addEventListener('mouseenter', () => {
+    if (dismissTimer) {
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
+      remaining -= (Date.now() - startTime);
+      if (remaining < 500) remaining = 500;
+    }
+  });
+
+  toast.addEventListener('mouseleave', () => {
+    startTimer();
+  });
+
   requestAnimationFrame(() => toast.classList.add('show'));
-  setTimeout(() => {
-    toast.classList.remove('show');
-    toast.addEventListener('transitionend', () => toast.remove());
-    // Fallback removal if transition doesn't fire
-    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
-  }, 4000);
+  startTimer();
+
+  _addToHistory(title, body, type);
+}
+
+function _dismissToast(toast) {
+  toast.classList.remove('show');
+  toast.addEventListener('transitionend', () => toast.remove());
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
+}
+
+function showToast(body, type = 'info') {
+  _createToast(type === 'success' ? 'Achievement' : 'Notice', body, type);
+}
+
+window.nexus.onToast(({ title, body, type }) => {
+  _createToast(title, body, type);
 });
+
+// Notification history panel
+function _initNotificationHistoryPanel() {
+  const statusBar = document.getElementById('status-bar');
+  if (!statusBar) return;
+  const wrapper = document.createElement('span');
+  wrapper.id = 'notif-history-wrapper';
+  wrapper.innerHTML = `<span id="notif-history-btn" class="notif-history-btn" title="Notification history">&#128276;<span id="notif-history-badge" class="notif-history-badge" style="display:none">0</span></span>`;
+  // Insert before update-status
+  const updateStatus = document.getElementById('update-status');
+  statusBar.insertBefore(wrapper, updateStatus);
+
+  const btn = wrapper.querySelector('#notif-history-btn');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _toggleNotificationHistory();
+  });
+}
+
+function _toggleNotificationHistory() {
+  let panel = document.getElementById('notif-history-panel');
+  if (panel) {
+    panel.remove();
+    return;
+  }
+  panel = document.createElement('div');
+  panel.id = 'notif-history-panel';
+  panel.className = 'notif-history-panel';
+  if (notificationHistory.length === 0) {
+    panel.innerHTML = '<div class="notif-history-empty">No notifications yet</div>';
+  } else {
+    panel.innerHTML = [...notificationHistory].reverse().map(n => {
+      const time = new Date(n.timestamp).toLocaleTimeString();
+      return `<div class="notif-history-item notif-history-${n.type}"><span class="notif-history-time">${time}</span><strong>${n.title}</strong><span>${n.body}</span></div>`;
+    }).join('');
+  }
+  document.body.appendChild(panel);
+  // Close on outside click
+  const closeHandler = (e) => {
+    if (!panel.contains(e.target) && e.target.id !== 'notif-history-btn') {
+      panel.remove();
+      document.removeEventListener('click', closeHandler);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+_initNotificationHistoryPanel();
 
 // --- Dashboard event-driven updates ---
 
-// Output previews -> dashboard cards
+// Output previews -> dashboard cards + sparkline activity tracking
 window.nexus.onOutputPreview(({ id, lines }) => {
   const dash = tabManager.getDashboard();
-  if (dash) dash.updatePreview(id, lines);
+  if (dash) {
+    dash.updatePreview(id, lines);
+    dash.recordOutput(id);
+  }
 });
 
 // Stuck warnings -> dashboard + notification

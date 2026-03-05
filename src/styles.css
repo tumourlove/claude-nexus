@@ -1126,6 +1126,162 @@ kbd {
   text-align: center;
 }
 
+/* === Dashboard Filter Toolbar === */
+.dash-filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 10px;
+  flex-wrap: wrap;
+}
+.dash-filter-search {
+  flex: 1;
+  min-width: 140px;
+  padding: 5px 10px;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+}
+.dash-filter-search:focus { border-color: #e94560; }
+.dash-filter-search::placeholder { color: #555; }
+.dash-filter-status-btns { display: flex; gap: 4px; }
+.dash-filter-btn {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #8888aa;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dash-filter-btn:hover { border-color: #4fc3f7; color: #e0e0e0; }
+.dash-filter-btn.active { border-color: #e94560; color: #e94560; background: rgba(233, 69, 96, 0.1); }
+.dash-sort-select {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #8888aa;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+.dash-sort-select:focus { border-color: #e94560; }
+
+/* === Activity Sparklines === */
+.dash-sparkline-wrap {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: 4px;
+}
+.dash-sparkline { display: block; }
+
+/* === Ambient Breathing Background === */
+.terminal-pane { position: relative; }
+.terminal-pane::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+.terminal-pane.breathing-active::after {
+  background: radial-gradient(ellipse at center, rgba(255, 180, 100, 0.015) 0%, transparent 70%);
+  animation: breatheWarm 3s ease-in-out infinite;
+}
+.terminal-pane.breathing-error::after {
+  background: rgba(239, 83, 80, 0.02);
+  opacity: 1;
+}
+@keyframes breatheWarm {
+  0%, 100% { opacity: 0.005; }
+  50% { opacity: 0.02; }
+}
+
+/* === Toast Improvements === */
+.toast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.toast-close {
+  cursor: pointer;
+  font-size: 16px;
+  color: #888;
+  line-height: 1;
+  padding: 0 2px;
+  transition: color 0.15s;
+}
+.toast-close:hover { color: #e0e0e0; }
+
+/* === Notification History === */
+.notif-history-btn {
+  cursor: pointer;
+  position: relative;
+  font-size: 13px;
+  padding: 0 4px;
+  transition: opacity 0.15s;
+}
+.notif-history-btn:hover { opacity: 1; }
+.notif-history-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #e94560;
+  color: #fff;
+  font-size: 9px;
+  padding: 0 3px;
+  border-radius: 6px;
+  min-width: 12px;
+  text-align: center;
+  line-height: 14px;
+}
+#notif-history-wrapper {
+  position: relative;
+  margin-left: 8px;
+}
+.notif-history-panel {
+  position: fixed;
+  bottom: 28px;
+  right: 12px;
+  width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  z-index: 1001;
+  padding: 8px;
+  animation: helpSlideIn 0.12s ease-out;
+}
+.notif-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #c0c0d0;
+  border-bottom: 1px solid #0a0f1e;
+}
+.notif-history-item:last-child { border-bottom: none; }
+.notif-history-time { color: #555; font-size: 10px; }
+.notif-history-item strong { color: #e94560; font-size: 12px; }
+.notif-history-info { border-left: 2px solid #4fc3f7; }
+.notif-history-success { border-left: 2px solid #66bb6a; }
+.notif-history-warning { border-left: 2px solid #ffa726; }
+.notif-history-error { border-left: 2px solid #ef5350; }
+.notif-history-empty { color: #555; font-style: italic; padding: 12px; text-align: center; font-size: 12px; }
+
 /* === Feature 1: Terminal Search Bar === */
 .term-search-bar {
   position: absolute;
