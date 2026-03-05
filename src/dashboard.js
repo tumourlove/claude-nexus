@@ -21,6 +21,7 @@ export class Dashboard {
       <div class="dash-toolbar">
         <h2>Nexus Dashboard</h2>
         <div class="dash-toolbar-actions">
+          <button class="dash-btn" id="dash-unstick-btn" title="Send Enter to all sessions to unstick frozen terminals">⏎ Unstick All</button>
           <button class="dash-btn" id="dash-broadcast-btn" title="Broadcast message to all sessions">Broadcast</button>
           <button class="dash-btn" id="dash-update-claude-btn" title="Update Claude Code CLI">Update Claude</button>
           <button class="dash-btn" id="dash-update-nexus-btn" title="Check for Nexus updates">Update Nexus</button>
@@ -56,6 +57,13 @@ export class Dashboard {
   }
 
   _bindEvents() {
+    this.container.querySelector('#dash-unstick-btn').addEventListener('click', async () => {
+      const sessions = await window.nexus.listSessions();
+      if (sessions) {
+        sessions.forEach(s => window.nexus.terminalWrite(s.id, '\n'));
+      }
+    });
+
     this.container.querySelector('#dash-broadcast-btn').addEventListener('click', () => {
       const text = prompt('Broadcast message to all sessions:');
       if (text) window.nexus.broadcastMessage(text);
@@ -106,6 +114,7 @@ export class Dashboard {
           ${s.progress || (this._progress && this._progress[s.id]) ? `<div class="progress-bar"><div class="progress-fill" style="width:${(s.progress || this._progress[s.id]).percent || 0}%"></div><span class="progress-text">${this._escape((s.progress || this._progress[s.id]).message)}</span></div>` : ''}
           <div class="dash-card-actions">
             <button class="dash-card-btn dash-focus-btn" data-action="focus" data-id="${s.id}" title="Focus this tab">Focus</button>
+            <button class="dash-card-btn" data-action="unstick" data-id="${s.id}" title="Send Enter to unstick">⏎</button>
             <button class="dash-card-btn dash-msg-btn" data-action="message" data-id="${s.id}" title="Send message">Message</button>
             <button class="dash-card-btn dash-restart-btn" data-action="restart" data-id="${s.id}" title="Restart session">Restart</button>
             <button class="dash-card-btn dash-cancel-btn" data-action="cancel" data-id="${s.id}" title="Send SIGINT">Cancel</button>
@@ -179,6 +188,9 @@ export class Dashboard {
       }
       case 'restart':
         if (confirm(`Restart session ${id}?`)) window.nexus.restartSession(id);
+        break;
+      case 'unstick':
+        window.nexus.terminalWrite(id, '\n');
         break;
       case 'cancel':
         window.nexus.cancelSession(id);

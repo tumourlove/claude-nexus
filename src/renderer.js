@@ -14,8 +14,15 @@ chatPanel.createToggleButton(document.querySelector('#tab-bar') || document.body
 
 // Wire send handler
 chatPanel._onSendMessage = (text) => {
-  // Broadcast message from user to all sessions
+  // Echo message in chat so user sees what they sent
+  chatPanel.addMessage('You', text, 'normal');
+  // Broadcast to MCP servers (sessions see it via read_messages)
   window.nexus.broadcastMessage(text);
+  // Also write to active session's PTY so Claude receives it as terminal input
+  const activeId = tabManager.activeTabId;
+  if (activeId) {
+    window.nexus.terminalWrite(activeId, text + '\n');
+  }
 };
 
 // Listen for inter-session messages to show in chat

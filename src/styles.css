@@ -974,10 +974,10 @@ kbd {
   position: fixed;
   top: 0;
   right: -340px;
-  width: 320px;
+  width: 340px;
   height: 100%;
-  background: #1a1a2e;
-  border-left: 1px solid rgba(255,255,255,0.1);
+  background: #16213e;
+  border-left: 1px solid #0f3460;
   display: flex;
   flex-direction: column;
   transition: right 0.2s ease;
@@ -990,12 +990,14 @@ kbd {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding: 12px 16px;
+  border-bottom: 1px solid #0f3460;
+  background: #1a1a2e;
 }
 .chat-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
+  color: #e0e0e0;
 }
 .chat-close {
   background: none;
@@ -1013,10 +1015,10 @@ kbd {
 }
 .chat-msg {
   margin-bottom: 8px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: 6px;
-  background: rgba(255,255,255,0.03);
-  font-size: 13px;
+  background: rgba(255,255,255,0.06);
+  font-size: 14px;
 }
 .chat-msg-urgent {
   border-left: 2px solid #f59e0b;
@@ -1028,16 +1030,18 @@ kbd {
 }
 .chat-msg-from {
   font-weight: 600;
-  color: #8b5cf6;
-  font-size: 11px;
+  color: #b794f6;
+  font-size: 12px;
 }
 .chat-msg-time {
-  font-size: 10px;
-  opacity: 0.4;
+  font-size: 11px;
+  color: #666;
 }
 .chat-msg-body {
-  line-height: 1.4;
+  line-height: 1.5;
   word-break: break-word;
+  color: #d0d0e0;
+  font-size: 14px;
 }
 .chat-result {
   background: rgba(74, 222, 128, 0.1);
@@ -1082,17 +1086,21 @@ kbd {
 }
 .chat-input {
   width: 100%;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
   border-radius: 6px;
-  padding: 8px 10px;
-  color: #fff;
-  font-size: 13px;
+  padding: 10px 12px;
+  color: #e0e0e0;
+  font-size: 14px;
   outline: none;
   box-sizing: border-box;
 }
+.chat-input::placeholder {
+  color: #666;
+}
 .chat-input:focus {
   border-color: #8b5cf6;
+  background: rgba(255,255,255,0.1);
 }
 .chat-toggle-btn {
   position: relative;
