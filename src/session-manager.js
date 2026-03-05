@@ -33,7 +33,7 @@ class SessionManager {
 
     // Write temporary MCP config for this session
     const mcpConfigPath = path.join(this.configDir, `mcp-${id}.json`);
-    const mcpConfig = this._buildMcpConfig(id);
+    const mcpConfig = this._buildMcpConfig(id, template || (isLead ? 'lead' : 'implementer'));
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 
     // Build claude CLI args
@@ -357,7 +357,7 @@ Do NOT spawn additional sessions — that is the lead's job. Complete your task 
     return base;
   }
 
-  _buildMcpConfig(sessionId) {
+  _buildMcpConfig(sessionId, template) {
     // Use the bundled MCP server (single file, no external deps)
     // In packaged builds it's in resources/mcp-server.js (via extraResources)
     // In dev it's in dist/mcp-server.js (built by esbuild)
@@ -377,6 +377,7 @@ Do NOT spawn additional sessions — that is the lead's job. Complete your task 
           env: {
             NEXUS_SESSION_ID: sessionId,
             NEXUS_IPC_PATH: this._getIpcPath(),
+            NEXUS_TEMPLATE: template || 'implementer',
           },
         },
       },

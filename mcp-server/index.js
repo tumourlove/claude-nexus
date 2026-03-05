@@ -11,6 +11,28 @@ const sessionIdIdx = args.indexOf('--session-id');
 const SESSION_ID = sessionIdIdx !== -1 ? args[sessionIdIdx + 1] : 'unknown';
 const IPC_PATH = process.env.NEXUS_IPC_PATH || '\\\\.\\pipe\\claude-nexus-ipc';
 
+const SESSION_TEMPLATE = process.env.NEXUS_TEMPLATE || 'implementer';
+
+const TEMPLATE_TOOLS = {
+  lead: null, // null = all tools allowed
+  implementer: null, // workers get all tools
+  researcher: new Set([
+    'list_sessions', 'read_messages', 'report_result', 'wait_for_workers',
+    'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
+    'read_session_history', 'search_across_sessions', 'save_checkpoint',
+  ]),
+  reviewer: new Set([
+    'list_sessions', 'send_message', 'read_messages', 'report_result',
+    'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
+    'read_session_history', 'search_across_sessions', 'save_checkpoint',
+  ]),
+  explorer: new Set([
+    'list_sessions', 'read_messages', 'report_result',
+    'read_session_history', 'search_across_sessions',
+    'scratchpad_get', 'scratchpad_list',
+  ]),
+};
+
 // Shared state (connected to main process via IPC)
 const messageBus = new MessageBus();
 const registry = new SessionRegistry();
@@ -140,6 +162,20 @@ const server = new McpServer({
   name: 'claude-nexus',
   version: '0.1.0',
 });
+
+const originalTool = server.tool.bind(server);
+server.tool = function(name, description, schema, handler) {
+  const wrappedHandler = async (args) => {
+    const allowed = TEMPLATE_TOOLS[SESSION_TEMPLATE];
+    if (allowed !== null && !allowed.has(name)) {
+      return {
+        content: [{ type: 'text', text: `Tool "${name}" is not available for ${SESSION_TEMPLATE} sessions.` }],
+      };
+    }
+    return handler(args);
+  };
+  return originalTool(name, description, schema, wrappedHandler);
+};
 
 // --- Core Communication Tools ---
 
