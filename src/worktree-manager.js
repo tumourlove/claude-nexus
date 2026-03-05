@@ -88,6 +88,56 @@ class WorktreeManager {
     return result;
   }
 
+  cleanupOrphans(activeSessionIds, repoPath) {
+    if (!repoPath) return;
+    const worktreeDir = path.join(repoPath, '.nexus-worktrees');
+    if (!fs.existsSync(worktreeDir)) return;
+
+    // Remove orphaned worktree directories
+    try {
+      const dirs = fs.readdirSync(worktreeDir);
+      for (const dir of dirs) {
+        if (activeSessionIds.has(dir)) continue;
+        const dirPath = path.join(worktreeDir, dir);
+        if (!fs.statSync(dirPath).isDirectory()) continue;
+        try {
+          execSync(`git worktree remove "${dirPath}" --force`, {
+            cwd: repoPath,
+            stdio: 'pipe',
+            timeout: 10000,
+          });
+        } catch {
+          // If git worktree remove fails, try manual cleanup
+          try { fs.rmSync(dirPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+      }
+    } catch { /* ignore readdir errors */ }
+
+    // Clean up orphaned nexus-* git branches
+    try {
+      const branches = execSync('git branch --list "nexus-*"', {
+        cwd: repoPath,
+        encoding: 'utf8',
+        timeout: 10000,
+      }).trim().split('\n').map(b => b.trim()).filter(Boolean);
+
+      for (const branch of branches) {
+        // Extract session ID from branch name (nexus-{sessionId}-{timestamp})
+        const match = branch.match(/^nexus-(.+)-\d+$/);
+        if (!match) continue;
+        const sessionId = match[1];
+        if (activeSessionIds.has(sessionId)) continue;
+        try {
+          execSync(`git branch -D "${branch}"`, {
+            cwd: repoPath,
+            stdio: 'pipe',
+            timeout: 5000,
+          });
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore branch listing errors */ }
+  }
+
   cleanup() {
     for (const [id] of this.worktrees) {
       this.removeWorktree(id);

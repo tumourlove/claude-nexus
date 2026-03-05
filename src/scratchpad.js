@@ -134,7 +134,9 @@ class Scratchpad {
     try {
       const obj = {};
       for (const [k, v] of this.data) obj[k] = v;
-      fs.writeFileSync(this.filePath, JSON.stringify(obj, null, 2));
+      const tmpPath = this.filePath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(obj, null, 2));
+      fs.renameSync(tmpPath, this.filePath);
     } catch (e) {
       // Ignore write errors
     }
