@@ -23,6 +23,8 @@ const TEMPLATE_TOOLS = {
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
     'kb_search', 'kb_list',
+    'structured_message', 'context_estimate',
+    'subscribe', 'unsubscribe', 'publish',
   ]),
   reviewer: new Set([
     'list_sessions', 'send_message', 'read_messages', 'report_result',
@@ -32,12 +34,17 @@ const TEMPLATE_TOOLS = {
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
     'kb_search', 'kb_list', 'kb_add', 'share_snippet',
+    'structured_message', 'context_estimate',
+    'subscribe', 'unsubscribe', 'publish',
   ]),
   explorer: new Set([
     'list_sessions', 'read_messages', 'report_result',
     'read_session_history', 'search_across_sessions',
     'scratchpad_get', 'scratchpad_list', 'batch_scratchpad', 'session_info',
     'list_tasks', 'get_snippet', 'kb_search', 'kb_list',
+    'get_worker_diff',
+    'structured_message', 'context_estimate',
+    'subscribe', 'unsubscribe',
   ]),
 };
 
@@ -164,7 +171,24 @@ function handleIpcMessage(msg) {
     resultWaiters = [];
   }
   if (msg.type === 'message') {
-    messageBus.send(msg.from, SESSION_ID, msg.message, msg.priority);
+    // W9: structured message fields + ack
+    messageBus.send(msg.from, SESSION_ID, msg.message, msg.priority, {
+      type: msg.msgType,
+      subject: msg.subject,
+      data: msg.data,
+    });
+    if (msg.messageId) {
+      sendIpc({ type: 'ack', messageId: msg.messageId });
+    }
+  }
+  // W10: event handling
+  if (msg.type === 'event') {
+    messageBus.send(
+      msg.source || 'system',
+      SESSION_ID,
+      `[EVENT ${msg.channel}] ${JSON.stringify(msg.data)}`,
+      'normal'
+    );
   }
 }
 
@@ -206,37 +230,57 @@ server.tool(
   }
 );
 
+// W9: send_message with delivery acknowledgment
 server.tool(
   'send_message',
-  'Send a message to another Claude session',
+  'Send a message to another Claude session (with delivery acknowledgment)',
   {
     target_session_id: z.string().describe('ID of the target session'),
     message: z.string().describe('Message content'),
     priority: z.enum(['normal', 'urgent']).default('normal').describe('Message priority'),
   },
   async ({ target_session_id, message, priority }) => {
-    sendIpc({
-      type: 'send_message',
-      from: SESSION_ID,
-      to: target_session_id,
-      message,
-      priority,
-    });
-    return {
-      content: [{ type: 'text', text: `Message sent to ${target_session_id}` }],
-    };
+    try {
+      const response = await ipcRequest({
+        type: 'send_message',
+        from: SESSION_ID,
+        to: target_session_id,
+        message,
+        priority,
+      }, 5000);
+      const delivered = response.delivered !== false;
+      return {
+        content: [{ type: 'text', text: delivered
+          ? `Message sent to ${target_session_id} (delivered)`
+          : `Message sent to ${target_session_id} (delivery unconfirmed: ${response.reason})` }],
+      };
+    } catch (e) {
+      // Fallback: fire-and-forget if IPC request fails
+      sendIpc({
+        type: 'send_message',
+        from: SESSION_ID,
+        to: target_session_id,
+        message,
+        priority,
+      });
+      return {
+        content: [{ type: 'text', text: `Message sent to ${target_session_id} (no ack)` }],
+      };
+    }
   }
 );
 
+// W9: read_messages with type filter
 server.tool(
   'read_messages',
   'Read incoming messages from other sessions',
   {
     since_timestamp: z.number().optional().describe('Only messages after this Unix timestamp (ms)'),
     limit: z.number().default(50).describe('Max messages to return'),
+    type: z.enum(['blocker', 'info', 'request', 'decision', 'review']).optional().describe('Filter by structured message type'),
   },
-  async ({ since_timestamp, limit }) => {
-    const messages = messageBus.read(SESSION_ID, { sinceTimestamp: since_timestamp, limit });
+  async ({ since_timestamp, limit, type }) => {
+    const messages = messageBus.read(SESSION_ID, { sinceTimestamp: since_timestamp, limit, type });
     return {
       content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }],
     };
@@ -257,8 +301,80 @@ server.tool(
   }
 );
 
+// W9: structured_message tool
+server.tool(
+  'structured_message',
+  'Send a typed, structured message to another session (richer than plain send_message)',
+  {
+    to: z.string().describe('Target session ID'),
+    type: z.enum(['blocker', 'info', 'request', 'decision', 'review']).describe('Message type'),
+    subject: z.string().describe('Short summary of the message'),
+    data: z.record(z.unknown()).optional().describe('Arbitrary JSON payload'),
+    priority: z.enum(['normal', 'urgent']).default('normal').describe('Message priority'),
+  },
+  async ({ to, type, subject, data, priority }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'send_message',
+        from: SESSION_ID,
+        to,
+        message: `[${type.toUpperCase()}] ${subject}`,
+        msgType: type,
+        subject,
+        data,
+        priority,
+      }, 5000);
+      const delivered = response.delivered !== false;
+      return {
+        content: [{ type: 'text', text: delivered
+          ? `Structured message [${type}] sent to ${to} (delivered)`
+          : `Structured message [${type}] sent to ${to} (delivery unconfirmed: ${response.reason})` }],
+      };
+    } catch (e) {
+      sendIpc({
+        type: 'send_message',
+        from: SESSION_ID,
+        to,
+        message: `[${type.toUpperCase()}] ${subject}`,
+        msgType: type,
+        subject,
+        data,
+        priority,
+      });
+      return {
+        content: [{ type: 'text', text: `Structured message [${type}] sent to ${to} (no ack)` }],
+      };
+    }
+  }
+);
+
+// W9: context_estimate tool
+server.tool(
+  'context_estimate',
+  'Get a rough estimate of your context window usage based on cumulative output',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({
+        type: 'context_estimate',
+        sessionId: SESSION_ID,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          output_bytes: response.output_bytes,
+          estimated_context_percent: response.estimated_context_percent,
+          level: response.level,
+        }, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
 // --- Session Management Tools ---
 
+// Main branch: spawn_session with ipcRequest + sessionId return
 server.tool(
   'spawn_session',
   'Spawn a new Claude Code session in a new Nexus tab. This creates a full, independent Claude Code instance with its own context window, terminal, and file access. ALWAYS use this instead of local Agent subagents for delegating work.',
@@ -574,6 +690,7 @@ server.tool(
 
 // --- Git Worktree Tools ---
 
+// W11: enhanced merge_worker with conflict detection
 server.tool(
   'merge_worker',
   'Merge a worker session\'s worktree branch into the main branch',
@@ -590,6 +707,9 @@ server.tool(
       });
       if (response.success) {
         return { content: [{ type: 'text', text: `Merged ${response.branch} via ${strategy}` }] };
+      }
+      if (response.conflicts && response.conflicts.length > 0) {
+        return { content: [{ type: 'text', text: `Merge conflicts detected. Use resolve_conflicts to fix them.\n${JSON.stringify({ branch: response.branch, conflicts: response.conflicts }, null, 2)}` }] };
       }
       return { content: [{ type: 'text', text: `Merge failed: ${response.error}` }] };
     } catch (e) {
@@ -608,6 +728,64 @@ server.tool(
       return {
         content: [{ type: 'text', text: JSON.stringify(response.worktrees, null, 2) }],
       };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// W11: spawn_workers batch tool
+server.tool(
+  'spawn_workers',
+  'Spawn multiple worker sessions in one call. More efficient than calling spawn_session repeatedly.',
+  {
+    workers: z.array(z.object({
+      label: z.string().optional().describe('Tab label for this worker'),
+      prompt: z.string().describe('Initial task/prompt for this worker'),
+      cwd: z.string().describe('Working directory'),
+      template: z.enum(['implementer', 'researcher', 'reviewer', 'explorer']).default('implementer')
+        .describe('Session template'),
+    })).describe('Array of worker configurations to spawn'),
+  },
+  async ({ workers }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'batch-spawn',
+        from: SESSION_ID,
+        workers,
+      }, 15000);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ spawned: response.spawned }, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// W11: resolve_conflicts tool
+server.tool(
+  'resolve_conflicts',
+  'Resolve merge conflicts after a failed merge_worker call. Apply resolutions per file then commit.',
+  {
+    session_id: z.string().describe('Worker session ID whose merge had conflicts'),
+    resolutions: z.array(z.object({
+      file: z.string().describe('Conflicting file path (relative to repo root)'),
+      resolution: z.enum(['ours', 'theirs', 'custom']).describe('How to resolve: keep ours, theirs, or provide custom content'),
+      content: z.string().optional().describe('Custom file content (required when resolution is "custom")'),
+    })).describe('Resolution for each conflicting file'),
+  },
+  async ({ session_id, resolutions }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'resolve_conflicts',
+        sessionId: session_id,
+        resolutions,
+      }, 15000);
+      if (response.success) {
+        return { content: [{ type: 'text', text: `Conflicts resolved and committed.\n${JSON.stringify(response.resolved, null, 2)}` }] };
+      }
+      return { content: [{ type: 'text', text: `Resolution failed: ${response.error}\n${JSON.stringify(response.resolved, null, 2)}` }] };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
     }
@@ -1057,6 +1235,273 @@ server.tool(
           template: response.template,
         }, null, 2) }],
       };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Event Pub/Sub Tools (W10) ---
+
+server.tool(
+  'subscribe',
+  'Subscribe to events matching a channel pattern. Use wildcards like "file:*" to match "file:claimed", "file:released", etc.',
+  {
+    channel_pattern: z.string().describe('Channel pattern to subscribe to (e.g. "session:*", "file:*", "task:*")'),
+  },
+  async ({ channel_pattern }) => {
+    try {
+      const response = await ipcRequest({ type: 'subscribe', channelPattern: channel_pattern });
+      registry.addSubscription(SESSION_ID, channel_pattern);
+      return {
+        content: [{ type: 'text', text: `Subscribed to: ${channel_pattern}. Events will appear in read_messages.` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'unsubscribe',
+  'Unsubscribe from a previously subscribed channel pattern',
+  {
+    channel_pattern: z.string().describe('Channel pattern to unsubscribe from'),
+  },
+  async ({ channel_pattern }) => {
+    try {
+      const response = await ipcRequest({ type: 'unsubscribe', channelPattern: channel_pattern });
+      registry.removeSubscription(SESSION_ID, channel_pattern);
+      return {
+        content: [{ type: 'text', text: `Unsubscribed from: ${channel_pattern}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'publish',
+  'Publish an event to a channel. All sessions subscribed to matching patterns will receive it.',
+  {
+    channel: z.string().describe('Event channel (e.g. "build:complete", "test:failed")'),
+    data: z.record(z.unknown()).optional().describe('Event payload data'),
+  },
+  async ({ channel, data }) => {
+    try {
+      const response = await ipcRequest({ type: 'publish', channel, data: data || {} });
+      return {
+        content: [{ type: 'text', text: `Published event to: ${channel}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Code Review Tools (W12) ---
+
+server.tool(
+  'submit_for_review',
+  'Submit files for code review by another session',
+  {
+    files: z.array(z.string()).describe('File paths to review'),
+    description: z.string().describe('Description of changes'),
+  },
+  async ({ files, description }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_submit',
+        submitter: SESSION_ID,
+        files,
+        description,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Review submitted: ${response.reviewId}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'claim_review',
+  'Claim a pending code review for yourself',
+  {
+    review_id: z.string().describe('Review ID to claim'),
+  },
+  async ({ review_id }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_claim',
+        reviewerId: SESSION_ID,
+        reviewId: review_id,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: JSON.stringify(response.review, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'approve_review',
+  'Approve a code review you are reviewing',
+  {
+    review_id: z.string().describe('Review ID to approve'),
+    comment: z.string().optional().describe('Optional approval comment'),
+  },
+  async ({ review_id, comment }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_approve',
+        reviewerId: SESSION_ID,
+        reviewId: review_id,
+        comment,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Review ${review_id} approved` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'request_changes',
+  'Request changes on a code review you are reviewing',
+  {
+    review_id: z.string().describe('Review ID'),
+    comments: z.array(z.object({
+      file: z.string().describe('File path'),
+      line: z.number().describe('Line number'),
+      comment: z.string().describe('Review comment'),
+    })).describe('Line-level review comments'),
+  },
+  async ({ review_id, comments }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_request_changes',
+        reviewerId: SESSION_ID,
+        reviewId: review_id,
+        comments,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Changes requested on review ${review_id} (${comments.length} comments)` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'list_reviews',
+  'List code reviews with optional status filter',
+  {
+    status: z.enum(['pending', 'in_review', 'approved', 'changes_requested']).optional().describe('Filter by review status'),
+  },
+  async ({ status }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'review_list',
+        status,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(response.reviews, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Consensus Decision Tools (W12) ---
+
+server.tool(
+  'propose_decision',
+  'Propose a decision for sessions to vote on',
+  {
+    topic: z.string().describe('Decision topic'),
+    options: z.array(z.string()).describe('Available options to vote on'),
+    description: z.string().describe('Detailed description of the decision'),
+  },
+  async ({ topic, options, description }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'decision_propose',
+        proposer: SESSION_ID,
+        topic,
+        options,
+        description,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Decision proposed: ${response.decisionId} — "${topic}"` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'vote',
+  'Cast a vote on an open decision',
+  {
+    decision_id: z.string().describe('Decision ID to vote on'),
+    choice: z.string().describe('Your chosen option'),
+    reasoning: z.string().describe('Reasoning for your vote'),
+  },
+  async ({ decision_id, choice, reasoning }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'decision_vote',
+        sessionId: SESSION_ID,
+        decisionId: decision_id,
+        choice,
+        reasoning,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Vote cast: "${choice}" on decision ${decision_id}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'resolve_decision',
+  'Resolve a decision (by majority vote or explicit winner)',
+  {
+    decision_id: z.string().describe('Decision ID to resolve'),
+    winning_option: z.string().optional().describe('Override winner (if omitted, majority wins)'),
+  },
+  async ({ decision_id, winning_option }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'decision_resolve',
+        decisionId: decision_id,
+        winningOption: winning_option,
+      });
+      if (response.error) return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      return { content: [{ type: 'text', text: `Decision resolved: "${response.decision.topic}" → ${response.decision.resolvedOption}` }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'list_decisions',
+  'List consensus decisions with optional status filter',
+  {
+    status: z.enum(['open', 'resolved']).optional().describe('Filter by decision status'),
+  },
+  async ({ status }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'decision_list',
+        status,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(response.decisions, null, 2) }] };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
     }

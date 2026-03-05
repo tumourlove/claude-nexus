@@ -50,6 +50,10 @@ contextBridge.exposeInMainWorld('nexus', {
   onSessionProgress: (cb) => ipcRenderer.on('session:progress', (_e, data) => cb(data)),
   onChatMessage: (cb) => ipcRenderer.on('chat:message', (_e, data) => cb(data)),
 
+  // Session actions
+  duplicateSession: (id) => ipcRenderer.invoke('session:duplicate', { id }),
+  getSessionInfo: (id) => ipcRenderer.invoke('session:info', { id }),
+
   // Auto-updater
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   downloadUpdate: () => ipcRenderer.invoke('updater:download'),

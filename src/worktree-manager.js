@@ -71,8 +71,97 @@ class WorktreeManager {
 
       return { success: true, branch: info.branch, strategy };
     } catch (e) {
+      // Check if merge failed due to conflicts
+      const conflicts = this._parseConflicts(info.repoPath);
+      if (conflicts.length > 0) {
+        return {
+          success: false,
+          branch: info.branch,
+          conflicts: conflicts,
+          error: 'Merge conflicts detected',
+        };
+      }
       return { success: false, error: e.message, branch: info.branch };
     }
+  }
+
+  _parseConflicts(repoPath) {
+    const opts = { cwd: repoPath, encoding: 'utf8', timeout: 10000 };
+    let conflictFiles = [];
+    try {
+      // git diff --name-only --diff-filter=U lists unmerged (conflicting) files
+      const output = execSync('git diff --name-only --diff-filter=U', opts).trim();
+      conflictFiles = output.split('\n').filter(Boolean);
+    } catch (e) {
+      return [];
+    }
+
+    const conflicts = [];
+    for (const file of conflictFiles) {
+      const filePath = path.join(repoPath, file);
+      let rawContent = '';
+      try {
+        rawContent = fs.readFileSync(filePath, 'utf8');
+      } catch (e) {
+        conflicts.push({ file, ours: '', theirs: '', markers: '(could not read file)' });
+        continue;
+      }
+
+      // Extract conflict sections from markers
+      const markerRegex = /^<{7}\s.*\n([\s\S]*?)^={7}\n([\s\S]*?)^>{7}\s.*$/gm;
+      let ours = '';
+      let theirs = '';
+      let match;
+      while ((match = markerRegex.exec(rawContent)) !== null) {
+        ours += match[1];
+        theirs += match[2];
+      }
+
+      conflicts.push({
+        file,
+        ours: ours.trimEnd(),
+        theirs: theirs.trimEnd(),
+        markers: rawContent,
+      });
+    }
+    return conflicts;
+  }
+
+  resolveConflicts(sessionId, resolutions) {
+    const info = this.worktrees.get(sessionId);
+    if (!info) return { success: false, error: 'No worktree found for session' };
+
+    const opts = { cwd: info.repoPath, encoding: 'utf8', timeout: 10000 };
+    const resolved = [];
+
+    for (const res of resolutions) {
+      const filePath = path.join(info.repoPath, res.file);
+      try {
+        if (res.resolution === 'ours') {
+          execSync(`git checkout --ours "${res.file}"`, opts);
+        } else if (res.resolution === 'theirs') {
+          execSync(`git checkout --theirs "${res.file}"`, opts);
+        } else if (res.resolution === 'custom' && res.content !== undefined) {
+          fs.writeFileSync(filePath, res.content);
+        } else {
+          resolved.push({ file: res.file, success: false, error: 'Invalid resolution type' });
+          continue;
+        }
+        resolved.push({ file: res.file, success: true });
+      } catch (e) {
+        resolved.push({ file: res.file, success: false, error: e.message });
+      }
+    }
+
+    // Stage all resolved files and commit
+    try {
+      execSync('git add .', opts);
+      execSync('git commit --no-edit', opts);
+    } catch (e) {
+      return { success: false, resolved, error: `Failed to commit: ${e.message}` };
+    }
+
+    return { success: true, resolved };
   }
 
   listWorktrees() {
@@ -86,56 +175,6 @@ class WorktreeManager {
       result.push({ sessionId, branch: info.branch, path: info.path, changedFiles });
     }
     return result;
-  }
-
-  cleanupOrphans(activeSessionIds, repoPath) {
-    if (!repoPath) return;
-    const worktreeDir = path.join(repoPath, '.nexus-worktrees');
-    if (!fs.existsSync(worktreeDir)) return;
-
-    // Remove orphaned worktree directories
-    try {
-      const dirs = fs.readdirSync(worktreeDir);
-      for (const dir of dirs) {
-        if (activeSessionIds.has(dir)) continue;
-        const dirPath = path.join(worktreeDir, dir);
-        if (!fs.statSync(dirPath).isDirectory()) continue;
-        try {
-          execSync(`git worktree remove "${dirPath}" --force`, {
-            cwd: repoPath,
-            stdio: 'pipe',
-            timeout: 10000,
-          });
-        } catch {
-          // If git worktree remove fails, try manual cleanup
-          try { fs.rmSync(dirPath, { recursive: true, force: true }); } catch { /* ignore */ }
-        }
-      }
-    } catch { /* ignore readdir errors */ }
-
-    // Clean up orphaned nexus-* git branches
-    try {
-      const branches = execSync('git branch --list "nexus-*"', {
-        cwd: repoPath,
-        encoding: 'utf8',
-        timeout: 10000,
-      }).trim().split('\n').map(b => b.trim()).filter(Boolean);
-
-      for (const branch of branches) {
-        // Extract session ID from branch name (nexus-{sessionId}-{timestamp})
-        const match = branch.match(/^nexus-(.+)-\d+$/);
-        if (!match) continue;
-        const sessionId = match[1];
-        if (activeSessionIds.has(sessionId)) continue;
-        try {
-          execSync(`git branch -D "${branch}"`, {
-            cwd: repoPath,
-            stdio: 'pipe',
-            timeout: 5000,
-          });
-        } catch { /* ignore */ }
-      }
-    } catch { /* ignore branch listing errors */ }
   }
 
   cleanup() {

@@ -5,7 +5,7 @@ class MessageBus {
     this.nextMsgId = 1;
   }
 
-  send(fromId, toId, message, priority = 'normal') {
+  send(fromId, toId, message, priority = 'normal', { type, subject, data } = {}) {
     const msg = {
       id: this.nextMsgId++,
       from: fromId,
@@ -15,6 +15,11 @@ class MessageBus {
       timestamp: Date.now(),
       read: false,
     };
+
+    // Structured message fields (optional)
+    if (type) msg.type = type;
+    if (subject) msg.subject = subject;
+    if (data) msg.data = data;
 
     if (!this.messages.has(toId)) {
       this.messages.set(toId, []);
@@ -33,12 +38,16 @@ class MessageBus {
     return sent;
   }
 
-  read(sessionId, { sinceTimestamp, limit = 50 } = {}) {
+  read(sessionId, { sinceTimestamp, limit = 50, type } = {}) {
     const inbox = this.messages.get(sessionId) || [];
     let filtered = inbox;
 
     if (sinceTimestamp) {
       filtered = filtered.filter(m => m.timestamp > sinceTimestamp);
+    }
+
+    if (type) {
+      filtered = filtered.filter(m => m.type === type);
     }
 
     const result = filtered.slice(-limit);

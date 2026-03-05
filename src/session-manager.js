@@ -373,6 +373,7 @@ COMMUNICATION:
 
 ORCHESTRATION:
 - spawn_session: Create or reuse a worker session. Idle/done/stuck workers are automatically recycled.
+- spawn_workers: Spawn multiple workers in one call (more efficient than repeated spawn_session)
 - spawn_explorer: Spawn a read-only explorer session to analyze/cross-reference other sessions
 - wait_for_workers: BLOCKING wait for worker results. Use this instead of polling.
 - get_session_status: Check if a session is idle, busy, or done (avoid polling)
@@ -412,6 +413,7 @@ HISTORY & SEARCH:
 SESSION LIFECYCLE:
 - reset_session: Reset a session (clears context), optionally preserving progress
 - merge_worker: Merge a worker's git worktree back (merge/squash/cherry-pick)
+- resolve_conflicts: Resolve merge conflicts after a failed merge (ours/theirs/custom per file)
 - list_worktrees: See all active worker worktrees and their changed files`;
 
     let prompt = base;

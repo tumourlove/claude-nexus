@@ -3,6 +3,9 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const { EventBus } = require('./event-bus');
+const { ReviewManager } = require('./review-manager');
+const { ConsensusManager } = require('./consensus-manager');
 
 class IpcServer {
   constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, onSpawnRequest }) {
@@ -20,7 +23,49 @@ class IpcServer {
     this.knowledgeBase = null; // initialized when first session provides a cwd
     this.snippets = new Map(); // snippetId -> { filePath, startLine, endLine, label, from }
     this.snippetId = 0;
-    this.sessionStats = new Map(); // sessionId -> { connectedAt, messagesSent, messagesReceived, toolCalls }
+    // Main branch: session stats (connectedAt, messagesSent, messagesReceived, toolCalls)
+    this.sessionStats = new Map();
+    // W9: message ack tracking + context estimation
+    this.nextMessageId = 0;
+    this.pendingAcks = new Map(); // messageId -> { resolve, timer }
+    // W10: event pub/sub
+    this.eventBus = new EventBus();
+    // W12: code review + consensus
+    this.reviewManager = new ReviewManager();
+    this.consensusManager = new ConsensusManager();
+
+    // W10: Wire up conflict detector to publish file events
+    if (this.conflictDetector) {
+      this.conflictDetector.onEvent = (channel, data, sourceSessionId) => {
+        this._publishEvent(channel, data, sourceSessionId);
+      };
+    }
+  }
+
+  // W9: track output bytes for context estimation
+  trackOutput(sessionId, data) {
+    const stats = this.sessionStats.get(sessionId);
+    if (stats) {
+      if (!stats.outputBytes) stats.outputBytes = 0;
+      stats.outputBytes += Buffer.byteLength(data);
+    }
+  }
+
+  // W9: context window usage estimate
+  getContextEstimate(sessionId) {
+    const stats = this.sessionStats.get(sessionId) || {};
+    const outputBytes = stats.outputBytes || 0;
+    const estimatedPercent = Math.min(100, Math.round(outputBytes / 128000 * 100));
+    let level;
+    if (estimatedPercent < 40) level = 'low';
+    else if (estimatedPercent < 65) level = 'medium';
+    else if (estimatedPercent < 85) level = 'high';
+    else level = 'critical';
+    return {
+      output_bytes: outputBytes,
+      estimated_context_percent: estimatedPercent,
+      level,
+    };
   }
 
   getIpcPath() {
@@ -57,6 +102,9 @@ class IpcServer {
         if (sessionId) {
           this.clients.delete(sessionId);
           if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
+          // W10: cleanup event subscriptions + publish close event
+          this.eventBus.unsubscribeAll(sessionId);
+          this._publishEvent('session:closed', { sessionId }, sessionId);
         }
       });
 
@@ -64,6 +112,7 @@ class IpcServer {
         if (sessionId) {
           this.clients.delete(sessionId);
           if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
+          this.eventBus.unsubscribeAll(sessionId);
         }
       });
     });
@@ -100,6 +149,7 @@ class IpcServer {
             messagesSent: 0,
             messagesReceived: 0,
             toolCalls: 0,
+            outputBytes: 0,
           });
         }
         return msg.sessionId;
@@ -113,26 +163,63 @@ class IpcServer {
         break;
       }
 
+      // W9: enhanced send_message with messageId, structured fields, and ack
       case 'send_message': {
         const targetSocket = this.clients.get(msg.to);
+        const messageId = ++this.nextMessageId;
+        const payload = {
+          type: 'message',
+          from: msg.from,
+          message: msg.message,
+          priority: msg.priority,
+          messageId,
+        };
+        // Forward structured fields if present (W9)
+        if (msg.msgType) payload.msgType = msg.msgType;
+        if (msg.subject) payload.subject = msg.subject;
+        if (msg.data) payload.data = msg.data;
+
         if (targetSocket) {
-          this._reply(targetSocket, {
-            type: 'message',
-            from: msg.from,
-            message: msg.message,
-            priority: msg.priority,
-          });
+          this._reply(targetSocket, payload);
           const targetStats = this.sessionStats.get(msg.to);
           if (targetStats) targetStats.messagesReceived++;
+          // Wait for ack with 3s timeout
+          if (msg.requestId) {
+            const ackPromise = new Promise((resolve) => {
+              const timer = setTimeout(() => {
+                this.pendingAcks.delete(messageId);
+                resolve({ delivered: false, reason: 'timeout' });
+              }, 3000);
+              this.pendingAcks.set(messageId, { resolve, timer });
+            });
+            ackPromise.then((result) => {
+              this._reply(socket, { type: 'message_sent', ...result, requestId: msg.requestId });
+            });
+          }
+        } else {
+          if (msg.requestId) {
+            this._reply(socket, { type: 'message_sent', delivered: false, reason: 'session not connected', requestId: msg.requestId });
+          }
         }
         const senderStats = this.sessionStats.get(msg.from);
         if (senderStats) senderStats.messagesSent++;
         if (this.sessionManager.mainWindow) {
           this.sessionManager.mainWindow.webContents.send('chat:message', {
             from: msg.from,
-            message: msg.message,
+            message: msg.subject ? `[${msg.msgType || 'info'}] ${msg.subject}: ${msg.message}` : msg.message,
             priority: msg.priority,
           });
+        }
+        break;
+      }
+
+      // W9: ack handler
+      case 'ack': {
+        const pending = this.pendingAcks.get(msg.messageId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pendingAcks.delete(msg.messageId);
+          pending.resolve({ delivered: true });
         }
         break;
       }
@@ -176,6 +263,8 @@ class IpcServer {
               label: msg.label || reusable.label,
             });
           }
+          // W10: publish spawn event
+          this._publishEvent('session:spawned', { sessionId: reusable.id, label: msg.label || reusable.label, reused: true }, msg.from);
         } else if (this.onSpawnRequest) {
           // onSpawnRequest returns the new session ID
           spawnedId = this.onSpawnRequest({
@@ -185,6 +274,7 @@ class IpcServer {
             template: msg.template,
             requestedBy: msg.from,
           });
+          this._publishEvent('session:spawned', { sessionId: spawnedId, label: msg.label, template: msg.template }, msg.from);
         }
         if (msg.requestId) {
           this._reply(socket, { type: 'session_spawned', sessionId: spawnedId, requestId: msg.requestId });
@@ -416,6 +506,10 @@ class IpcServer {
         this._reply(socket, { type: 'task_updated', task, requestId: msg.requestId });
         if (this.sessionManager.mainWindow) {
           this.sessionManager.mainWindow.webContents.send('tasks:updated', { tasks: this.taskQueue.list() });
+        }
+        // W10: publish task:completed event
+        if (msg.status === 'done' && task) {
+          this._publishEvent('task:completed', { taskId: msg.taskId, title: task.title, result: msg.result }, currentSessionId);
         }
         break;
       }
@@ -753,6 +847,226 @@ class IpcServer {
         break;
       }
 
+      // W9: context_estimate handler
+      case 'context_estimate': {
+        const estimate = this.getContextEstimate(msg.sessionId);
+        this._reply(socket, { type: 'context_estimate', ...estimate, requestId: msg.requestId });
+        break;
+      }
+
+      // W10: Event Pub/Sub handlers
+      case 'subscribe': {
+        this.eventBus.subscribe(currentSessionId, msg.channelPattern);
+        this._reply(socket, { type: 'subscribed', channelPattern: msg.channelPattern, requestId: msg.requestId });
+        break;
+      }
+
+      case 'unsubscribe': {
+        this.eventBus.unsubscribe(currentSessionId, msg.channelPattern);
+        this._reply(socket, { type: 'unsubscribed', channelPattern: msg.channelPattern, requestId: msg.requestId });
+        break;
+      }
+
+      case 'publish': {
+        this._publishEvent(msg.channel, msg.data, currentSessionId);
+        this._reply(socket, { type: 'published', channel: msg.channel, requestId: msg.requestId });
+        break;
+      }
+
+      // W11: Batch Spawn handler
+      case 'batch-spawn': {
+        const spawned = [];
+        for (const w of (msg.workers || [])) {
+          const allSessions = this.sessionManager.listSessions();
+          const reusable = allSessions.find(s =>
+            !s.isLead && (s.status === 'idle' || s.status === 'done' || s.status === 'stuck' || s.status === 'error')
+            && !spawned.some(sp => sp.id === s.id)
+          );
+          if (reusable) {
+            this.sessionManager.respawnSession(reusable.id, {
+              label: w.label || 'Worker',
+              cwd: w.cwd,
+              initialPrompt: w.prompt,
+              template: w.template || 'implementer',
+            });
+            if (this.sessionManager.mainWindow) {
+              this.sessionManager.mainWindow.webContents.send('session:relabeled', {
+                id: reusable.id,
+                label: w.label || 'Worker',
+              });
+            }
+            spawned.push({ id: reusable.id, label: w.label || 'Worker' });
+          } else if (this.onSpawnRequest) {
+            const newId = this.onSpawnRequest({
+              cwd: w.cwd,
+              initialPrompt: w.prompt,
+              label: w.label || 'Worker',
+              template: w.template || 'implementer',
+              requestedBy: msg.from,
+            });
+            spawned.push({ id: newId || '(pending)', label: w.label || 'Worker' });
+          }
+        }
+        this._reply(socket, { type: 'batch_spawned', spawned, requestId: msg.requestId });
+        break;
+      }
+
+      // W11: Conflict Resolution handler
+      case 'resolve_conflicts': {
+        const result = this.sessionManager.worktreeManager
+          ? this.sessionManager.worktreeManager.resolveConflicts(msg.sessionId, msg.resolutions)
+          : { success: false, error: 'Worktree manager not available' };
+        this._reply(socket, { type: 'conflicts_resolved', ...result, requestId: msg.requestId });
+        break;
+      }
+
+      // W12: Code Review handlers
+      case 'review_submit': {
+        try {
+          const reviewId = this.reviewManager.submitForReview(msg.submitter, {
+            files: msg.files,
+            description: msg.description,
+          });
+          this._reply(socket, { type: 'review_submitted', reviewId, requestId: msg.requestId });
+        } catch (e) {
+          this._reply(socket, { type: 'review_submitted', reviewId: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'review_claim': {
+        try {
+          const review = this.reviewManager.claimReview(msg.reviewerId, msg.reviewId);
+          this._reply(socket, { type: 'review_claimed', review, requestId: msg.requestId });
+        } catch (e) {
+          this._reply(socket, { type: 'review_claimed', review: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'review_approve': {
+        try {
+          const review = this.reviewManager.approveReview(msg.reviewerId, msg.reviewId, msg.comment);
+          this._reply(socket, { type: 'review_approved', review, requestId: msg.requestId });
+          // Notify submitter
+          const submitterSocket = this.clients.get(review.submitter);
+          if (submitterSocket) {
+            this._reply(submitterSocket, {
+              type: 'message',
+              from: msg.reviewerId,
+              message: `[REVIEW APPROVED] Review ${msg.reviewId} approved${msg.comment ? ': ' + msg.comment : ''}`,
+              priority: 'normal',
+            });
+          }
+        } catch (e) {
+          this._reply(socket, { type: 'review_approved', review: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'review_request_changes': {
+        try {
+          const review = this.reviewManager.requestChanges(msg.reviewerId, msg.reviewId, msg.comments);
+          this._reply(socket, { type: 'review_changes_requested', review, requestId: msg.requestId });
+          // Notify submitter
+          const submitterSocket = this.clients.get(review.submitter);
+          if (submitterSocket) {
+            const commentSummary = msg.comments.map(c => `  ${c.file}:${c.line} — ${c.comment}`).join('\n');
+            this._reply(submitterSocket, {
+              type: 'message',
+              from: msg.reviewerId,
+              message: `[CHANGES REQUESTED] Review ${msg.reviewId}:\n${commentSummary}`,
+              priority: 'urgent',
+            });
+          }
+        } catch (e) {
+          this._reply(socket, { type: 'review_changes_requested', review: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'review_list': {
+        const reviews = this.reviewManager.listReviews(msg.status);
+        this._reply(socket, { type: 'review_listed', reviews, requestId: msg.requestId });
+        break;
+      }
+
+      case 'review_get': {
+        const review = this.reviewManager.getReview(msg.reviewId);
+        this._reply(socket, { type: 'review_detail', review, requestId: msg.requestId });
+        break;
+      }
+
+      // W12: Consensus Decision handlers
+      case 'decision_propose': {
+        try {
+          const decisionId = this.consensusManager.proposeDecision(msg.proposer, {
+            topic: msg.topic,
+            options: msg.options,
+            description: msg.description,
+          });
+          this._reply(socket, { type: 'decision_proposed', decisionId, requestId: msg.requestId });
+          // Broadcast to all sessions
+          for (const [id, s] of this.clients) {
+            if (id !== msg.proposer) {
+              this._reply(s, {
+                type: 'message',
+                from: msg.proposer,
+                message: `[DECISION PROPOSED] "${msg.topic}" — Options: ${msg.options.join(', ')}. Use vote tool with decision_id="${decisionId}" to cast your vote.`,
+                priority: 'normal',
+              });
+            }
+          }
+        } catch (e) {
+          this._reply(socket, { type: 'decision_proposed', decisionId: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'decision_vote': {
+        try {
+          const decision = this.consensusManager.vote(msg.sessionId, msg.decisionId, {
+            choice: msg.choice,
+            reasoning: msg.reasoning,
+          });
+          this._reply(socket, { type: 'decision_voted', decision, requestId: msg.requestId });
+        } catch (e) {
+          this._reply(socket, { type: 'decision_voted', decision: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'decision_resolve': {
+        try {
+          const decision = this.consensusManager.resolveDecision(msg.decisionId, msg.winningOption);
+          this._reply(socket, { type: 'decision_resolved', decision, requestId: msg.requestId });
+          // Broadcast result
+          for (const [id, s] of this.clients) {
+            this._reply(s, {
+              type: 'message',
+              from: 'system',
+              message: `[DECISION RESOLVED] "${decision.topic}" → ${decision.resolvedOption}`,
+              priority: 'normal',
+            });
+          }
+        } catch (e) {
+          this._reply(socket, { type: 'decision_resolved', decision: null, error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      case 'decision_list': {
+        const decisions = this.consensusManager.listDecisions(msg.status);
+        this._reply(socket, { type: 'decision_listed', decisions, requestId: msg.requestId });
+        break;
+      }
+
+      case 'decision_get': {
+        const decision = this.consensusManager.getDecision(msg.decisionId);
+        this._reply(socket, { type: 'decision_detail', decision, requestId: msg.requestId });
+        break;
+      }
+
       case 'heartbeat': {
         this.heartbeats.set(msg.sessionId, { timestamp: msg.timestamp });
         if (this.sessionManager.mainWindow) {
@@ -789,6 +1103,23 @@ class IpcServer {
     if (leadSession && leadSession.cwd) {
       const { KnowledgeBase } = require('./knowledge-base');
       this.knowledgeBase = new KnowledgeBase(leadSession.cwd);
+    }
+  }
+
+  // W10: publish event to all matching subscribers
+  _publishEvent(channel, data, sourceSessionId) {
+    const targets = this.eventBus.publish(channel, data, sourceSessionId);
+    for (const targetId of targets) {
+      const targetSocket = this.clients.get(targetId);
+      if (targetSocket) {
+        this._reply(targetSocket, {
+          type: 'event',
+          channel,
+          data,
+          source: sourceSessionId,
+          timestamp: Date.now(),
+        });
+      }
     }
   }
 

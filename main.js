@@ -9,19 +9,6 @@ process.on('unhandledRejection', (err) => {
 const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
-
-// Single-instance lock — prevent data corruption from multiple Nexus instances
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
-}
 const os = require('os');
 const { SessionManager } = require('./src/session-manager');
 const { IpcServer } = require('./src/ipc-server');
@@ -85,7 +72,6 @@ function createWindow() {
       mainWindow.webContents.send('session:spawn-requested', {
         id, label, cwd, initialPrompt, template,
       });
-      return id;
     },
   });
 
@@ -218,6 +204,42 @@ ipcMain.on('session:retry', (_event, { id, originalInfo }) => {
   if (session) session.retryCount = (originalInfo.retryCount || 0) + 1;
 });
 
+ipcMain.handle('session:duplicate', (_event, { id }) => {
+  const info = sessionManager.getSessionInfo(id);
+  if (!info) return null;
+  tabCounter++;
+  const newId = `worker-${tabCounter}`;
+  mainWindow.webContents.send('session:spawn-requested', {
+    id: newId,
+    label: `${info.label} (copy)`,
+    cwd: info.cwd,
+    initialPrompt: info.initialPrompt,
+    template: info.template,
+  });
+  return { id: newId, label: `${info.label} (copy)` };
+});
+
+ipcMain.handle('session:info', (_event, { id }) => {
+  return sessionManager.getSessionInfo(id);
+});
+
+ipcMain.handle('session:batch-spawn', (_event, { workers }) => {
+  const spawned = [];
+  for (const w of workers) {
+    tabCounter++;
+    const id = `worker-${tabCounter}`;
+    mainWindow.webContents.send('session:spawn-requested', {
+      id,
+      label: w.label || 'Worker',
+      cwd: w.cwd,
+      initialPrompt: w.prompt,
+      template: w.template || 'implementer',
+    });
+    spawned.push({ id, label: w.label || 'Worker' });
+  }
+  return { spawned };
+});
+
 ipcMain.handle('dialog:open-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
@@ -319,28 +341,6 @@ function registerShellIfNeeded() {
 }
 
 app.whenReady().then(() => {
-  // Startup self-check: validate required CLI tools
-  const { execSync } = require('child_process');
-  const missing = [];
-  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    execSync(`${whichCmd} claude`, { stdio: 'pipe', timeout: 5000 });
-  } catch {
-    missing.push('claude');
-  }
-  try {
-    execSync('git --version', { stdio: 'pipe', timeout: 5000 });
-  } catch {
-    missing.push('git');
-  }
-  if (missing.length > 0) {
-    dialog.showErrorBox(
-      'Missing Dependencies',
-      `The following required tools were not found in PATH: ${missing.join(', ')}.\n\n` +
-      'Some features will not work correctly. Please install the missing tools and restart.'
-    );
-  }
-
   // Check for unclean shutdown and offer recovery
   const tempCheckpointMgr = new CheckpointManager();
   if (tempCheckpointMgr.checkUncleanShutdown()) {
@@ -364,15 +364,6 @@ app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
   registerShellIfNeeded();
-
-  // Clean up orphaned worktrees from previous sessions
-  const startupCwd = process.argv[2] || process.cwd();
-  try {
-    const activeIds = new Set(sessionManager.sessions.keys());
-    sessionManager.worktreeManager.cleanupOrphans(activeIds, startupCwd);
-  } catch (e) {
-    console.error('Worktree orphan cleanup failed:', e.message);
-  }
 });
 app.on('window-all-closed', () => {
   if (checkpointManager) checkpointManager.destroy();

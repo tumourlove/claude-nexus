@@ -4,6 +4,8 @@ class ConflictDetector {
     this.fileEdits = new Map();
     // filepath -> { sessionId, timestamp, intent }
     this.locks = new Map();
+    // Event callback for pub/sub integration — set by IpcServer
+    this.onEvent = null;
   }
 
   recordEdit(sessionId, filepath) {
@@ -41,6 +43,9 @@ class ConflictDetector {
     }
 
     this.locks.set(filepath, { sessionId, timestamp: Date.now(), intent });
+    if (this.onEvent) {
+      this.onEvent('file:claimed', { filepath, intent }, sessionId);
+    }
     return { conflict: false };
   }
 
@@ -48,6 +53,9 @@ class ConflictDetector {
     const lock = this.locks.get(filepath);
     if (lock && lock.sessionId === sessionId) {
       this.locks.delete(filepath);
+      if (this.onEvent) {
+        this.onEvent('file:released', { filepath }, sessionId);
+      }
       return true;
     }
     return false;
