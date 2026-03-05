@@ -19,6 +19,7 @@ const TEMPLATE_TOOLS = {
   researcher: new Set([
     'list_sessions', 'read_messages', 'report_result', 'wait_for_workers',
     'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
+    'batch_scratchpad', 'scratchpad_cas', 'session_info', 'query_git_status',
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
     'kb_search', 'kb_list',
@@ -26,6 +27,8 @@ const TEMPLATE_TOOLS = {
   reviewer: new Set([
     'list_sessions', 'send_message', 'read_messages', 'report_result',
     'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
+    'batch_scratchpad', 'scratchpad_cas', 'session_info', 'query_git_status',
+    'get_worker_diff',
     'read_session_history', 'search_across_sessions', 'save_checkpoint',
     'stream_progress', 'list_tasks', 'pull_task', 'update_task', 'get_snippet',
     'kb_search', 'kb_list', 'kb_add', 'share_snippet',
@@ -33,7 +36,7 @@ const TEMPLATE_TOOLS = {
   explorer: new Set([
     'list_sessions', 'read_messages', 'report_result',
     'read_session_history', 'search_across_sessions',
-    'scratchpad_get', 'scratchpad_list',
+    'scratchpad_get', 'scratchpad_list', 'batch_scratchpad', 'session_info',
     'list_tasks', 'get_snippet', 'kb_search', 'kb_list',
   ]),
 };
@@ -267,17 +270,22 @@ server.tool(
       .describe('Session template restricting available capabilities'),
   },
   async ({ working_directory, initial_prompt, label, template }) => {
-    sendIpc({
-      type: 'spawn_session',
-      from: SESSION_ID,
-      working_directory,
-      initial_prompt,
-      label: label || 'Worker',
-      template,
-    });
-    return {
-      content: [{ type: 'text', text: `Session spawned: ${label || 'Worker'} in ${working_directory}` }],
-    };
+    try {
+      const response = await ipcRequest({
+        type: 'spawn_session',
+        from: SESSION_ID,
+        working_directory,
+        initial_prompt,
+        label: label || 'Worker',
+        template,
+      });
+      const sessionId = response.sessionId || 'unknown';
+      return {
+        content: [{ type: 'text', text: `Session spawned: ${sessionId} (${label || 'Worker'}) in ${working_directory}` }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error spawning session: ${e.message}` }] };
+    }
   }
 );
 
@@ -908,6 +916,146 @@ server.tool(
       const response = await ipcRequest({ type: 'kb_list', category });
       return {
         content: [{ type: 'text', text: JSON.stringify(response.entries, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Batch Scratchpad ---
+
+server.tool(
+  'batch_scratchpad',
+  'Perform multiple scratchpad operations in one call (set and/or get)',
+  {
+    set: z.record(z.string(), z.string()).optional().describe('Key-value pairs to set'),
+    get: z.array(z.string()).optional().describe('Keys to retrieve'),
+    namespace: z.string().optional().describe('Optional namespace'),
+  },
+  async ({ set, get, namespace }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'batch_scratchpad',
+        set: set || {},
+        get: get || [],
+        namespace,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ set_count: response.set_count, values: response.values }, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Scratchpad Compare-and-Swap ---
+
+server.tool(
+  'scratchpad_cas',
+  'Atomically compare-and-swap a scratchpad value. Sets new_value only if current value equals expected.',
+  {
+    key: z.string().describe('Key to compare-and-swap'),
+    expected: z.string().nullable().describe('Expected current value (null if key should not exist)'),
+    new_value: z.string().describe('New value to set if expected matches'),
+    namespace: z.string().optional().describe('Optional namespace'),
+  },
+  async ({ key, expected, new_value, namespace }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'scratchpad_cas',
+        key,
+        expected,
+        new_value,
+        namespace,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ success: response.success, current_value: response.current_value }, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Worker Diff ---
+
+server.tool(
+  'get_worker_diff',
+  'Get the git diff for a worker session\'s worktree (shows uncommitted changes)',
+  {
+    session_id: z.string().describe('Worker session ID to get diff for'),
+  },
+  async ({ session_id }) => {
+    try {
+      const response = await ipcRequest({
+        type: 'get_worker_diff',
+        sessionId: session_id,
+      });
+      if (response.error) {
+        return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      }
+      return {
+        content: [{ type: 'text', text: response.diff || '(no changes)' }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Git Status ---
+
+server.tool(
+  'query_git_status',
+  'Get structured git status for the calling session\'s working directory',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({
+        type: 'query_git_status',
+        sessionId: SESSION_ID,
+      });
+      if (response.error) {
+        return { content: [{ type: 'text', text: `Error: ${response.error}` }] };
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          branch: response.branch,
+          baseBranch: response.baseBranch,
+          changedFiles: response.changedFiles,
+          ahead: response.ahead,
+          behind: response.behind,
+        }, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Session Info ---
+
+server.tool(
+  'session_info',
+  'Get introspection info about the current session (uptime, message counts, tool usage)',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({
+        type: 'session_info',
+        sessionId: SESSION_ID,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          session_id: response.session_id,
+          uptime_seconds: response.uptime_seconds,
+          messages_sent: response.messages_sent,
+          messages_received: response.messages_received,
+          tool_calls_made: response.tool_calls_made,
+          template: response.template,
+        }, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };

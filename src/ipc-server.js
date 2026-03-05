@@ -2,6 +2,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 class IpcServer {
   constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, onSpawnRequest }) {
@@ -19,6 +20,7 @@ class IpcServer {
     this.knowledgeBase = null; // initialized when first session provides a cwd
     this.snippets = new Map(); // snippetId -> { filePath, startLine, endLine, label, from }
     this.snippetId = 0;
+    this.sessionStats = new Map(); // sessionId -> { connectedAt, messagesSent, messagesReceived, toolCalls }
   }
 
   getIpcPath() {
@@ -80,9 +82,26 @@ class IpcServer {
   }
 
   _handleMessage(msg, socket, currentSessionId) {
+    // Track tool calls per session (skip register/heartbeat)
+    if (msg.type !== 'register' && msg.type !== 'heartbeat') {
+      const callerId = msg.from || msg.sessionId || currentSessionId;
+      if (callerId) {
+        const stats = this.sessionStats.get(callerId);
+        if (stats) stats.toolCalls++;
+      }
+    }
+
     switch (msg.type) {
       case 'register':
         this.clients.set(msg.sessionId, socket);
+        if (!this.sessionStats.has(msg.sessionId)) {
+          this.sessionStats.set(msg.sessionId, {
+            connectedAt: Date.now(),
+            messagesSent: 0,
+            messagesReceived: 0,
+            toolCalls: 0,
+          });
+        }
         return msg.sessionId;
 
       case 'list_sessions': {
@@ -103,7 +122,11 @@ class IpcServer {
             message: msg.message,
             priority: msg.priority,
           });
+          const targetStats = this.sessionStats.get(msg.to);
+          if (targetStats) targetStats.messagesReceived++;
         }
+        const senderStats = this.sessionStats.get(msg.from);
+        if (senderStats) senderStats.messagesSent++;
         if (this.sessionManager.mainWindow) {
           this.sessionManager.mainWindow.webContents.send('chat:message', {
             from: msg.from,
@@ -136,7 +159,9 @@ class IpcServer {
         const reusable = allSessions.find(s =>
           !s.isLead && (s.status === 'idle' || s.status === 'done' || s.status === 'stuck' || s.status === 'error')
         );
+        let spawnedId = null;
         if (reusable) {
+          spawnedId = reusable.id;
           // Respawn in-place — reuses the existing tab
           this.sessionManager.respawnSession(reusable.id, {
             label: msg.label || reusable.label,
@@ -152,13 +177,17 @@ class IpcServer {
             });
           }
         } else if (this.onSpawnRequest) {
-          this.onSpawnRequest({
+          // onSpawnRequest returns the new session ID
+          spawnedId = this.onSpawnRequest({
             cwd: msg.working_directory,
             initialPrompt: msg.initial_prompt,
             label: msg.label,
             template: msg.template,
             requestedBy: msg.from,
           });
+        }
+        if (msg.requestId) {
+          this._reply(socket, { type: 'session_spawned', sessionId: spawnedId, requestId: msg.requestId });
         }
         break;
       }
@@ -620,6 +649,107 @@ class IpcServer {
           ? this.sessionManager.worktreeManager.listWorktrees()
           : [];
         this._reply(socket, { type: 'worktrees_listed', worktrees, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Batch Scratchpad ---
+      case 'batch_scratchpad': {
+        const result = this.scratchpad.batchOps(msg.set, msg.get, msg.namespace);
+        this._reply(socket, { type: 'batch_scratchpad_result', ...result, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Scratchpad Compare-and-Swap ---
+      case 'scratchpad_cas': {
+        const result = this.scratchpad.compareAndSwap(msg.key, msg.expected, msg.new_value, msg.namespace);
+        this._reply(socket, { type: 'scratchpad_cas_result', ...result, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Worker Diff ---
+      case 'get_worker_diff': {
+        let diff = '';
+        let error = null;
+        const worktree = this.sessionManager.worktreeManager
+          ? this.sessionManager.worktreeManager.getWorktree(msg.sessionId)
+          : null;
+        if (worktree) {
+          try {
+            diff = execSync('git diff', { cwd: worktree.path, encoding: 'utf8', timeout: 15000 });
+          } catch (e) {
+            error = e.message;
+          }
+        } else {
+          // Fallback: use session's cwd
+          const session = this.sessionManager.getSessionInfo(msg.sessionId);
+          if (session && session.cwd) {
+            try {
+              diff = execSync('git diff', { cwd: session.cwd, encoding: 'utf8', timeout: 15000 });
+            } catch (e) {
+              error = e.message;
+            }
+          } else {
+            error = `No worktree or cwd found for session ${msg.sessionId}`;
+          }
+        }
+        this._reply(socket, { type: 'worker_diff', diff, error, requestId: msg.requestId });
+        break;
+      }
+
+      // --- Git Status ---
+      case 'query_git_status': {
+        const session = this.sessionManager.getSessionInfo(msg.sessionId);
+        const cwd = session && session.cwd ? session.cwd : process.cwd();
+        try {
+          const opts = { cwd, encoding: 'utf8', timeout: 15000 };
+          const branch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
+          // Get tracking branch
+          let baseBranch = 'master';
+          try {
+            baseBranch = execSync(`git rev-parse --abbrev-ref ${branch}@{upstream}`, opts).trim();
+          } catch (e) { /* no upstream */ }
+          // Changed files
+          const statusRaw = execSync('git status --porcelain', opts).trim();
+          const changedFiles = statusRaw ? statusRaw.split('\n').map(line => ({
+            status: line.substring(0, 2).trim(),
+            path: line.substring(3),
+          })) : [];
+          // Ahead/behind
+          let ahead = 0, behind = 0;
+          try {
+            const counts = execSync(`git rev-list --left-right --count ${branch}...${baseBranch}`, opts).trim();
+            const parts = counts.split(/\s+/);
+            ahead = parseInt(parts[0]) || 0;
+            behind = parseInt(parts[1]) || 0;
+          } catch (e) { /* ignore */ }
+          this._reply(socket, {
+            type: 'git_status',
+            branch, baseBranch, changedFiles, ahead, behind,
+            requestId: msg.requestId,
+          });
+        } catch (e) {
+          this._reply(socket, { type: 'git_status', error: e.message, requestId: msg.requestId });
+        }
+        break;
+      }
+
+      // --- Session Info ---
+      case 'session_info': {
+        const session = this.sessionManager.getSessionInfo(msg.sessionId);
+        const stats = this.sessionStats.get(msg.sessionId) || {
+          connectedAt: Date.now(), messagesSent: 0, messagesReceived: 0, toolCalls: 0,
+        };
+        const uptimeSeconds = Math.floor((Date.now() - stats.connectedAt) / 1000);
+        this._reply(socket, {
+          type: 'session_info_result',
+          session_id: msg.sessionId,
+          uptime_seconds: uptimeSeconds,
+          messages_sent: stats.messagesSent,
+          messages_received: stats.messagesReceived,
+          tool_calls_made: stats.toolCalls,
+          template: (session && session.template) || 'unknown',
+          requestId: msg.requestId,
+        });
         break;
       }
 

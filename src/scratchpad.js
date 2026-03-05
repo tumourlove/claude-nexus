@@ -49,6 +49,39 @@ class Scratchpad {
     this._scheduleSave();
   }
 
+  compareAndSwap(key, expected, newValue, namespace = 'default') {
+    const fullKey = `${namespace}:${key}`;
+    const entry = this.data.get(fullKey);
+    const currentValue = entry ? entry.value : null;
+    if (currentValue === expected) {
+      this.data.set(fullKey, { value: newValue, updatedAt: Date.now() });
+      this._scheduleSave();
+      return { success: true, current_value: newValue };
+    }
+    return { success: false, current_value: currentValue };
+  }
+
+  batchOps(setEntries, getKeys, namespace = 'default') {
+    // Perform sets
+    let setCount = 0;
+    if (setEntries) {
+      for (const [key, value] of Object.entries(setEntries)) {
+        this.data.set(`${namespace}:${key}`, { value, updatedAt: Date.now() });
+        setCount++;
+      }
+      if (setCount > 0) this._scheduleSave();
+    }
+    // Perform gets
+    const values = {};
+    if (getKeys) {
+      for (const key of getKeys) {
+        const entry = this.data.get(`${namespace}:${key}`);
+        values[key] = entry ? entry.value : null;
+      }
+    }
+    return { set_count: setCount, values };
+  }
+
   clearNamespace(namespace) {
     const prefix = `${namespace}:`;
     for (const key of [...this.data.keys()]) {
