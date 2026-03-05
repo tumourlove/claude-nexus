@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('nexus', {
   onSessionHeartbeat: (cb) => ipcRenderer.on('session:heartbeat', (_e, data) => cb(data)),
   onTasksUpdated: (cb) => ipcRenderer.on('tasks:updated', (_e, data) => cb(data)),
   onSessionProgress: (cb) => ipcRenderer.on('session:progress', (_e, data) => cb(data)),
+  onChatMessage: (cb) => ipcRenderer.on('chat:message', (_e, data) => cb(data)),
 
   // Auto-updater
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),

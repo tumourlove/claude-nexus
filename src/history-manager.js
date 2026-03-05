@@ -7,12 +7,17 @@ class HistoryManager {
     this.historyDir = path.join(os.homedir(), '.claude-nexus', 'history');
     fs.mkdirSync(this.historyDir, { recursive: true });
     this.buffers = new Map(); // sessionId -> string[]
+    this.sessions = new Map(); // sessionId -> { output, startTime, label, template, isLead }
   }
 
   appendOutput(sessionId, data) {
     if (!this.buffers.has(sessionId)) {
       this.buffers.set(sessionId, []);
     }
+    if (!this.sessions.has(sessionId)) {
+      this.sessions.set(sessionId, { output: [], startTime: Date.now() });
+    }
+    this.sessions.get(sessionId).output.push(data);
     this.buffers.get(sessionId).push(data);
 
     // Keep buffer bounded (last 10000 lines worth)
@@ -50,6 +55,44 @@ class HistoryManager {
       }
     }
     return results;
+  }
+
+  getRunSessions() {
+    // Group sessions by lead session using spawn relationships
+    // Returns array of { lead, workers: [], startTime, endTime }
+    const sessions = [];
+    for (const [id, data] of this.sessions) {
+      sessions.push({
+        id,
+        label: data.label || id,
+        template: data.template || 'unknown',
+        startTime: data.startTime || Date.now(),
+        output: data.output || [],
+        isLead: data.isLead || false,
+      });
+    }
+
+    // If we have leads, group workers under them
+    const leads = sessions.filter(s => s.isLead);
+    if (leads.length === 0 && sessions.length > 0) {
+      // No lead — treat as a single run
+      return [{ lead: sessions[0], workers: sessions.slice(1), startTime: sessions[0].startTime }];
+    }
+
+    return leads.map(lead => ({
+      lead,
+      workers: sessions.filter(s => !s.isLead),
+      startTime: lead.startTime,
+    }));
+  }
+
+  getTimestampedOutput(sessionId) {
+    const data = this.sessions.get(sessionId);
+    if (!data || !data.output) return [];
+    return data.output.map((line, i) => ({
+      line,
+      timestamp: (data.startTime || Date.now()) + i * 100, // approximate
+    }));
   }
 
   saveToFile(sessionId, label = '') {

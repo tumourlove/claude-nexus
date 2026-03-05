@@ -1,10 +1,35 @@
 import '@xterm/xterm/css/xterm.css';
 import { TabManager } from './tab-manager';
 import { ProjectPicker } from './project-picker';
+import { ChatPanel } from './chat-panel';
 
 const container = document.getElementById('terminal-container');
 const tabBar = document.getElementById('tab-bar');
 const tabManager = new TabManager(container, tabBar);
+
+// Chat panel
+const chatPanel = new ChatPanel();
+chatPanel.create(document.getElementById('chat-sidebar-container'));
+chatPanel.createToggleButton(document.querySelector('#tab-bar') || document.body);
+
+// Wire send handler
+chatPanel._onSendMessage = (text) => {
+  // Broadcast message from user to all sessions
+  window.nexus.broadcastMessage(text);
+};
+
+// Listen for inter-session messages to show in chat
+window.nexus.onChatMessage((data) => {
+  chatPanel.addMessage(data.from, data.message, data.priority);
+});
+
+// Keyboard shortcut for chat panel
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+    e.preventDefault();
+    chatPanel.toggle();
+  }
+});
 
 // New tab button
 document.querySelector('.tab-add').addEventListener('click', () => {
@@ -111,6 +136,11 @@ window.nexus.onSessionExited(({ id }) => {
 // Handle session status updates
 window.nexus.onSessionStatus(({ id, status }) => {
   tabManager.updateTabStatus(id, status);
+  // Track task assignments for badge timing
+  if (status === 'working') {
+    const dash = tabManager.getDashboard();
+    if (dash) dash.recordTaskStart(id);
+  }
   refreshDashboard();
 });
 
@@ -141,6 +171,18 @@ startup();
 
 // Toast notifications
 const toastContainer = document.getElementById('toast-container');
+function showToast(body, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<strong>${type === 'success' ? 'Achievement' : 'Notice'}</strong><span>${body}</span>`;
+  toastContainer.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    toast.addEventListener('transitionend', () => toast.remove());
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
+  }, 4000);
+}
 window.nexus.onToast(({ title, body, type }) => {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
@@ -178,6 +220,12 @@ window.nexus.onSessionResult(({ id, result, status, timestamp }) => {
     const label = [...tabManager.tabs.values()].find(t => t.tabEl?.dataset?.tabId === id)?.label || id;
     dash.addResult({ id, label, result, status, timestamp });
     dash.addLogEntry(`Result from ${label}: ${status}`);
+    // Track completion for badges and stats
+    const completionResult = dash.recordCompletion(id, label, result?.length || 0);
+    if (completionResult.badges.length > 0) {
+      const latest = completionResult.badges[completionResult.badges.length - 1];
+      showToast(`${label} earned ${latest}!`, 'success');
+    }
   }
   // Badge the lead tab
   for (const [tid, t] of tabManager.tabs) {

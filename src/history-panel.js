@@ -68,6 +68,7 @@ export class HistoryPanel {
                 <span class="history-item-label">${s.label || s.id}</span>
                 <span class="history-item-meta">${s.template || ''} ${s.isLead ? '(Lead)' : ''}</span>
               </div>
+              <button class="replay-btn" data-session-id="${s.id}">Replay</button>
               <span class="history-item-time">${new Date(s.createdAt).toLocaleTimeString()}</span>
             </div>
           `).join('')}
@@ -77,8 +78,23 @@ export class HistoryPanel {
       listEl.innerHTML = html;
 
       listEl.querySelectorAll('.history-item').forEach(el => {
-        el.addEventListener('click', () => {
+        el.addEventListener('click', (e) => {
+          if (e.target.classList.contains('replay-btn')) return;
           this._viewSession(el.dataset.sessionId);
+        });
+      });
+
+      listEl.querySelectorAll('.replay-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const sessionId = btn.dataset.sessionId;
+          const session = sessions.find(s => s.id === sessionId);
+          if (session) {
+            this.showReplay({
+              lead: session,
+              workers: sessions.filter(s => s.id !== sessionId),
+            });
+          }
         });
       });
     } catch (e) {
@@ -113,6 +129,66 @@ export class HistoryPanel {
       const match = !this.searchQuery || label.includes(this.searchQuery) || meta.includes(this.searchQuery);
       el.style.display = match ? 'flex' : 'none';
     });
+  }
+
+  showReplay(sessions) {
+    const container = this.container;
+    if (!container) return;
+
+    const listEl = container.querySelector('#history-list');
+    const viewerEl = container.querySelector('#history-viewer');
+    if (listEl) listEl.style.display = 'none';
+    if (viewerEl) viewerEl.style.display = 'none';
+
+    // Remove any existing replay view
+    const existing = container.querySelector('.replay-view');
+    if (existing) existing.remove();
+
+    let html = '<div class="replay-view">';
+    html += '<div class="replay-header"><h3>Run Replay</h3>';
+    html += '<button class="replay-back">&#8592; Back</button></div>';
+
+    // Timeline
+    html += '<div class="replay-timeline">';
+    const allSessions = [sessions.lead, ...sessions.workers].filter(Boolean);
+    const templateColors = {
+      lead: '#f59e0b',
+      implementer: '#3b82f6',
+      researcher: '#10b981',
+      reviewer: '#8b5cf6',
+      explorer: '#ec4899',
+    };
+
+    allSessions.forEach(s => {
+      const color = templateColors[s.template] || '#6b7280';
+      const label = this._escape(s.label || s.id || 'unknown');
+      const template = s.template || 'unknown';
+      const outputLines = (s.output || []).slice(-200).join('');
+      html += `
+        <div class="replay-session" style="border-left: 3px solid ${color}">
+          <div class="replay-session-header">
+            <span class="replay-session-label" style="color:${color}">${label}</span>
+            <span class="replay-session-template">${template}</span>
+          </div>
+          <div class="replay-output"><pre>${this._escape(outputLines)}</pre></div>
+        </div>`;
+    });
+    html += '</div></div>';
+
+    container.insertAdjacentHTML('beforeend', html);
+
+    container.querySelector('.replay-view .replay-back').addEventListener('click', () => {
+      const replayView = container.querySelector('.replay-view');
+      if (replayView) replayView.remove();
+      if (listEl) listEl.style.display = 'block';
+    });
+  }
+
+  _escape(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   dispose() {

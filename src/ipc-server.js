@@ -98,6 +98,13 @@ class IpcServer {
             priority: msg.priority,
           });
         }
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('chat:message', {
+            from: msg.from,
+            message: msg.message,
+            priority: msg.priority,
+          });
+        }
         break;
       }
 
@@ -106,6 +113,13 @@ class IpcServer {
           if (id !== msg.from) {
             this._reply(s, { type: 'message', from: msg.from, message: msg.message, priority: 'normal' });
           }
+        }
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('chat:message', {
+            from: msg.from,
+            message: msg.message,
+            priority: 'normal',
+          });
         }
         break;
       }
@@ -169,6 +183,15 @@ class IpcServer {
               priority: 'urgent',
             });
           }
+        }
+
+        // Forward to chat panel
+        if (this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('chat:message', {
+            from: msg.sessionId,
+            message: `[RESULT ${msg.status}] ${msg.result}`,
+            priority: 'urgent',
+          });
         }
 
         // Notify renderer of result

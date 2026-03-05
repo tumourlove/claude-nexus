@@ -161,6 +161,22 @@ ipcMain.on('session:broadcast-message', (_event, { text }) => {
   }
 });
 
+ipcMain.on('chat:broadcast', (_event, text) => {
+  // Forward to all sessions via IPC server
+  if (ipcServer) {
+    for (const [id, socket] of ipcServer.clients) {
+      ipcServer._reply(socket, {
+        type: 'message',
+        from: 'user',
+        message: text,
+        priority: 'normal',
+      });
+    }
+  }
+  // Echo back to renderer for chat panel display
+  mainWindow.webContents.send('chat:message', { from: 'You', message: text, priority: 'normal' });
+});
+
 ipcMain.handle('app:update-claude', () => {
   const { exec } = require('child_process');
   return new Promise((resolve) => {

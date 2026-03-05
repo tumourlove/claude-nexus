@@ -4,6 +4,14 @@ export class Dashboard {
     this.container.className = 'dashboard';
     this.previews = new Map(); // id -> string[]
     this.results = [];
+    this._stats = {
+      tasksCompleted: 0,
+      totalTime: 0,
+      fastestWorker: null,
+      fastestTime: Infinity,
+    };
+    this._badges = new Map(); // sessionId -> Set of badge names
+    this._taskStartTimes = new Map(); // sessionId -> timestamp
     this._render();
     this._bindEvents();
   }
@@ -17,6 +25,11 @@ export class Dashboard {
           <button class="dash-btn" id="dash-update-claude-btn" title="Update Claude Code CLI">Update Claude</button>
           <button class="dash-btn" id="dash-update-nexus-btn" title="Check for Nexus updates">Update Nexus</button>
         </div>
+      </div>
+      <div class="dash-stats" id="dash-stats">
+        <span class="stat-item">Tasks: <strong id="stat-tasks">0</strong></span>
+        <span class="stat-item">Fastest: <strong id="stat-fastest">—</strong></span>
+        <span class="stat-item">Workers: <strong id="stat-workers">0</strong></span>
       </div>
       <div class="dash-cards" id="dash-cards">
         <div class="dashboard-empty">No sessions yet</div>
@@ -88,6 +101,7 @@ export class Dashboard {
             ${s.retryCount ? `<span class="retry-badge">retry ${s.retryCount}/${s.maxRetries}</span>` : ''}
             <span class="dash-card-cwd" title="${s.cwd || ''}">${this._shortenPath(s.cwd)}</span>
           </div>
+          ${this.getBadges(s.id).length ? `<div class="session-badges">${this.getBadges(s.id).map(b => `<span class="badge">${b}</span>`).join('')}</div>` : ''}
           <div class="dash-card-preview">${preview.length ? preview.map(l => `<div class="dash-preview-line">${this._escapeHtml(l)}</div>`).join('') : '<span class="dash-preview-empty">No output yet</span>'}</div>
           ${s.progress || (this._progress && this._progress[s.id]) ? `<div class="progress-bar"><div class="progress-fill" style="width:${(s.progress || this._progress[s.id]).percent || 0}%"></div><span class="progress-text">${this._escape((s.progress || this._progress[s.id]).message)}</span></div>` : ''}
           <div class="dash-card-actions">
@@ -99,6 +113,57 @@ export class Dashboard {
         </div>
       `;
     }).join('');
+    this.updateStats(sessions);
+  }
+
+  updateStats(sessions) {
+    const workers = sessions.filter(s => !s.isLead);
+    const activeWorkers = workers.filter(s => s.status === 'working' || s.status === 'in_progress');
+
+    const tasksEl = document.getElementById('stat-tasks');
+    const fastestEl = document.getElementById('stat-fastest');
+    const workersEl = document.getElementById('stat-workers');
+
+    if (tasksEl) tasksEl.textContent = this._stats.tasksCompleted;
+    if (fastestEl) fastestEl.textContent = this._stats.fastestWorker
+      ? `${this._stats.fastestWorker} (${Math.round(this._stats.fastestTime / 1000)}s)`
+      : '\u2014';
+    if (workersEl) workersEl.textContent = `${activeWorkers.length}/${workers.length}`;
+  }
+
+  recordCompletion(sessionId, label, resultLength) {
+    const startTime = this._taskStartTimes.get(sessionId);
+    const duration = startTime ? Date.now() - startTime : null;
+    this._taskStartTimes.delete(sessionId);
+
+    this._stats.tasksCompleted++;
+    if (duration && duration < this._stats.fastestTime) {
+      this._stats.fastestTime = duration;
+      this._stats.fastestWorker = label || sessionId;
+    }
+
+    // Check badges
+    if (!this._badges.has(sessionId)) this._badges.set(sessionId, new Set());
+    const badges = this._badges.get(sessionId);
+
+    if (duration && duration < 30000) badges.add('\u26a1 Speed Demon');
+    if (resultLength && resultLength > 1000) badges.add('\ud83d\udcdd Thorough');
+
+    // Count completions for Reliable badge
+    let completions = 0;
+    for (const [, b] of this._badges) {
+      if (b.has('\u26a1 Speed Demon') || b.has('\ud83d\udcdd Thorough')) completions++;
+    }
+
+    return { badges: [...badges], duration };
+  }
+
+  recordTaskStart(sessionId) {
+    this._taskStartTimes.set(sessionId, Date.now());
+  }
+
+  getBadges(sessionId) {
+    return [...(this._badges.get(sessionId) || [])];
   }
 
   _handleCardAction(action, id) {
