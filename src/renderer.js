@@ -119,6 +119,26 @@ document.addEventListener('keydown', (e) => {
     const idx = parseInt(e.key) - 1;
     if (idx < ids.length) tabManager.activateTab(ids[idx]);
   }
+  // Ctrl+Shift+F: terminal search
+  if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+    e.preventDefault();
+    tabManager.toggleSearch();
+  }
+  // Ctrl+Plus: zoom in font
+  if (e.ctrlKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    tabManager.zoomFont(2);
+  }
+  // Ctrl+Minus: zoom out font
+  if (e.ctrlKey && !e.shiftKey && e.key === '-') {
+    e.preventDefault();
+    tabManager.zoomFont(-2);
+  }
+  // Ctrl+0: reset font zoom
+  if (e.ctrlKey && !e.shiftKey && e.key === '0') {
+    e.preventDefault();
+    tabManager.resetFontZoom();
+  }
   // F1 or ? toggle help (only if not typing in terminal)
   if (e.key === 'F1') {
     e.preventDefault();
