@@ -67,6 +67,23 @@ function createWindow() {
   });
 
   ipcServer.start();
+
+  // Notify lead sessions when a worker exhausts all retries
+  sessionManager.ipcNotifyCallback = (msg) => {
+    if (msg.type === 'worker_failed') {
+      for (const [id, socket] of ipcServer.clients) {
+        const session = sessionManager.getSessionInfo(id);
+        if (session && session.isLead) {
+          ipcServer._reply(socket, {
+            type: 'message',
+            from: msg.sessionId,
+            message: `[WORKER_FAILED] Session ${msg.label || msg.sessionId} exhausted ${msg.retryCount} retries`,
+            priority: 'urgent',
+          });
+        }
+      }
+    }
+  };
 }
 
 ipcMain.on('session:create', (_event, { id, label, cwd, initialPrompt, template, isLead, cols, rows }) => {

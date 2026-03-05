@@ -11,6 +11,7 @@ class SessionManager {
     this.configDir = path.join(os.homedir(), '.claude-nexus', 'configs');
     fs.mkdirSync(this.configDir, { recursive: true });
     this.onOutput = null; // set by main.js
+    this.ipcNotifyCallback = null; // set by main.js for worker failure notifications
     this.worktreeManager = new WorktreeManager();
     this.stuckThresholdMs = 60000; // 60 seconds
     this._stuckCheckInterval = setInterval(() => this._checkStuck(), 10000);
@@ -83,12 +84,19 @@ class SessionManager {
       lastOutputAt: Date.now(),
       initialPrompt: initialPrompt || null,
       retryCount: 0,
-      maxRetries: 2,
+      maxRetries: 3,
     };
 
     ptyProc.onData((data) => {
       this.mainWindow.webContents.send(`terminal:data:${id}`, data);
       if (this.onOutput) this.onOutput(id, data);
+
+      // Buffer output for retry context
+      if (!session.outputBuffer) session.outputBuffer = [];
+      session.outputBuffer.push(data);
+      if (session.outputBuffer.length > 300) {
+        session.outputBuffer = session.outputBuffer.slice(-200);
+      }
 
       // Track activity for status detection
       session.lastOutputAt = Date.now();
@@ -105,21 +113,54 @@ class SessionManager {
     });
 
     ptyProc.onExit(({ exitCode }) => {
-      const status = exitCode === 0 ? 'done' : 'error';
-      this.updateStatus(id, status);
+      const sess = this.sessions.get(id);
+      if (!sess) return;
 
-      // If failed and under retry limit, offer retry
-      if (exitCode !== 0 && session.retryCount < session.maxRetries) {
-        this.mainWindow.webContents.send('session:retry-available', {
-          id,
-          exitCode,
-          retryCount: session.retryCount,
-          maxRetries: session.maxRetries,
+      if (exitCode !== 0 && sess.retryCount < sess.maxRetries && !sess.isLead) {
+        // Exponential backoff: 2s, 8s, 30s
+        const delays = [2000, 8000, 30000];
+        const delay = delays[Math.min(sess.retryCount, delays.length - 1)];
+        sess.retryCount++;
+        sess.status = 'retrying';
+
+        this.mainWindow.webContents.send('session:status', {
+          id, status: 'retrying', retryCount: sess.retryCount, maxRetries: sess.maxRetries,
         });
-      }
 
-      this.mainWindow.webContents.send('session:exited', { id, exitCode });
-      this._cleanup(id);
+        setTimeout(() => {
+          const lastOutput = this._getRecentOutput(id);
+          const retryPrompt = `[RETRY ${sess.retryCount}/${sess.maxRetries}] Previous attempt exited with code ${exitCode}.\n` +
+            (lastOutput ? `Recent output:\n${lastOutput.slice(0, 2000)}\n\n` : '') +
+            `Original task: ${sess.initialPrompt}`;
+
+          this.respawnSession(id, {
+            label: sess.label,
+            cwd: sess.cwd,
+            initialPrompt: retryPrompt,
+            template: sess.template,
+          });
+        }, delay);
+      } else if (exitCode !== 0 && !sess.isLead) {
+        sess.status = 'failed';
+        this.mainWindow.webContents.send('session:status', { id, status: 'failed' });
+        this.mainWindow.webContents.send('session:exited', { id, exitCode });
+        this._cleanup(id);
+
+        // Notify lead via callback
+        if (this.ipcNotifyCallback) {
+          this.ipcNotifyCallback({
+            type: 'worker_failed',
+            sessionId: id,
+            label: sess.label,
+            retryCount: sess.retryCount || 0,
+          });
+        }
+      } else {
+        sess.status = 'done';
+        this.mainWindow.webContents.send('session:status', { id, status: 'done' });
+        this.mainWindow.webContents.send('session:exited', { id, exitCode });
+        this._cleanup(id);
+      }
     });
 
     this.sessions.set(id, session);
@@ -183,6 +224,8 @@ class SessionManager {
       isLead: session.isLead,
       createdAt: session.createdAt,
       initialPrompt: session.initialPrompt,
+      retryCount: session.retryCount || 0,
+      maxRetries: session.maxRetries || 3,
     };
   }
 
@@ -196,6 +239,14 @@ class SessionManager {
       session.status = status;
       this.mainWindow.webContents.send('session:status', { id, status });
     }
+  }
+
+  _getRecentOutput(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session && session.outputBuffer) {
+      return session.outputBuffer.slice(-200).join('');
+    }
+    return '';
   }
 
   _checkStuck() {

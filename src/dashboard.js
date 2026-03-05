@@ -77,6 +77,7 @@ export class Dashboard {
             <span class="dash-card-label">${s.label || s.id}</span>
             <span class="dash-card-template">${s.template || ''}</span>
             ${s.isLead ? '<span class="dash-card-lead-badge">LEAD</span>' : ''}
+            ${s.retryCount ? `<span class="retry-badge">retry ${s.retryCount}/${s.maxRetries}</span>` : ''}
             <span class="dash-card-cwd" title="${s.cwd || ''}">${this._shortenPath(s.cwd)}</span>
           </div>
           <div class="dash-card-preview">${preview.length ? preview.map(l => `<div class="dash-preview-line">${this._escapeHtml(l)}</div>`).join('') : '<span class="dash-preview-empty">No output yet</span>'}</div>

@@ -48,6 +48,8 @@ html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; f
 .tab-status.status-error { background: #ef5350; }
 .tab-status.status-explorer { background: #ab47bc; }
 .tab-status.status-exited { background: #555; }
+.tab-status.status-retrying { background: #f59e0b; animation: pulse 1.5s infinite; }
+.tab-status.status-failed { background: #ef5350; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -591,6 +593,8 @@ kbd {
   50% { border-color: #ff7043; }
 }
 .dash-card-error { border-color: #ef5350; }
+.dash-card-failed { border-color: #ef5350; }
+.dash-card-retrying { border-color: #f59e0b; animation: stuckPulse 2s infinite; }
 .dash-card-done { border-color: #66bb6a; }
 
 .dash-card-header {
@@ -610,6 +614,16 @@ kbd {
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 700;
+}
+/* Retry badge */
+.retry-badge {
+  background: #f59e0b;
+  color: #000;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-left: 6px;
+  font-weight: 600;
 }
 .dash-card-cwd { margin-left: auto; font-size: 10px; color: #666; }
 
