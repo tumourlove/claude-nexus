@@ -7,7 +7,7 @@ class KnowledgeGraph {
     this.relationships = new Map(); // id -> relationship
     this.entityCounter = 0;
     this.relCounter = 0;
-    this.storePath = path.join(projectDir, '.claude-nexus', 'knowledge-graph.json');
+    this.storePath = path.join(projectDir, '.claude-corroboree', 'knowledge-graph.json');
     this._load();
   }
 

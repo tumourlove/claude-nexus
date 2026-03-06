@@ -11,12 +11,13 @@ const { KnowledgeGraph } = require('./knowledge-graph');
 const { Logger } = require('./logger');
 
 class IpcServer {
-  constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, onSpawnRequest }) {
+  constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, notificationManager, onSpawnRequest }) {
     this.sessionManager = sessionManager;
     this.scratchpad = scratchpad;
     this.historyManager = historyManager;
     this.conflictDetector = conflictDetector;
     this.taskQueue = taskQueue;
+    this.notificationManager = notificationManager;
     this.onSpawnRequest = onSpawnRequest;
     this.clients = new Map(); // sessionId -> socket
     this.server = null;
@@ -81,55 +82,57 @@ class IpcServer {
 
   getIpcPath() {
     if (os.platform() === 'win32') {
-      return '\\\\.\\pipe\\claude-nexus-ipc';
+      return '\\\\.\\pipe\\claude-corroboree-ipc';
     }
-    return path.join(os.tmpdir(), 'claude-nexus-ipc.sock');
+    return path.join(os.tmpdir(), 'claude-corroboree-ipc.sock');
+  }
+
+  _connectionHandler(socket) {
+    let sessionId = null;
+    let buffer = '';
+
+    socket.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          sessionId = this._handleMessage(msg, socket, sessionId);
+        } catch (e) {
+          process.stderr.write(`IPC parse error: ${e.message}\n`);
+        }
+      }
+    });
+
+    socket.on('close', () => {
+      if (sessionId) {
+        this.clients.delete(sessionId);
+        if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
+        // W10: cleanup event subscriptions + publish close event
+        this.eventBus.unsubscribeAll(sessionId);
+        this._publishEvent('session:closed', { sessionId }, sessionId);
+      }
+    });
+
+    socket.on('error', (err) => {
+      if (sessionId) {
+        Logger.warn('ipc-server', 'socket.error', `Socket error for ${sessionId}: ${err.message}`);
+        this.clients.delete(sessionId);
+        if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
+        this.eventBus.unsubscribeAll(sessionId);
+        // Attempt reconnection with exponential backoff
+        this._attemptReconnect(sessionId);
+      }
+    });
   }
 
   start() {
     const ipcPath = this.getIpcPath();
 
-    this.server = net.createServer((socket) => {
-      let sessionId = null;
-      let buffer = '';
-
-      socket.on('data', (data) => {
-        buffer += data.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            sessionId = this._handleMessage(msg, socket, sessionId);
-          } catch (e) {
-            process.stderr.write(`IPC parse error: ${e.message}\n`);
-          }
-        }
-      });
-
-      socket.on('close', () => {
-        if (sessionId) {
-          this.clients.delete(sessionId);
-          if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
-          // W10: cleanup event subscriptions + publish close event
-          this.eventBus.unsubscribeAll(sessionId);
-          this._publishEvent('session:closed', { sessionId }, sessionId);
-        }
-      });
-
-      socket.on('error', (err) => {
-        if (sessionId) {
-          Logger.warn('ipc-server', 'socket.error', `Socket error for ${sessionId}: ${err.message}`);
-          this.clients.delete(sessionId);
-          if (this.conflictDetector) this.conflictDetector.clearSession(sessionId);
-          this.eventBus.unsubscribeAll(sessionId);
-          // Attempt reconnection with exponential backoff
-          this._attemptReconnect(sessionId);
-        }
-      });
-    });
+    this.server = net.createServer(this._connectionHandler.bind(this));
 
     this.server.listen(ipcPath, () => {
       Logger.info('ipc-server', 'start', `IPC server listening on ${ipcPath}`);
@@ -137,9 +140,23 @@ class IpcServer {
 
     this.server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        // Clean up stale socket and retry (Unix only — pipes auto-clean on Windows)
-        try { fs.unlinkSync(ipcPath); } catch (e) { /* ignore */ }
-        this.server.listen(ipcPath);
+        Logger.warn('ipc-server', 'start', `Pipe in use, retrying in 1s...`);
+        // On Unix, clean up stale socket file. On Windows, pipes auto-clean — just retry after delay.
+        if (os.platform() !== 'win32') {
+          try { fs.unlinkSync(ipcPath); } catch (e) { /* ignore */ }
+        }
+        setTimeout(() => {
+          this.server.close();
+          this.server = net.createServer(this._connectionHandler.bind(this));
+          this.server.on('error', (retryErr) => {
+            Logger.error('ipc-server', 'start', `Retry failed: ${retryErr.code} ${retryErr.message}`);
+          });
+          this.server.listen(ipcPath, () => {
+            Logger.info('ipc-server', 'start', `IPC server listening on ${ipcPath} (retry)`);
+          });
+        }, 1000);
+      } else {
+        Logger.error('ipc-server', 'start', `IPC server error: ${err.code} ${err.message}`);
       }
     });
   }
@@ -293,6 +310,14 @@ class IpcServer {
         if (msg.requestId) {
           this._reply(socket, { type: 'session_spawned', sessionId: spawnedId, requestId: msg.requestId });
         }
+        if (this.notificationManager && spawnedId) {
+          const spawnLabel = msg.label || spawnedId;
+          this.notificationManager.notify({
+            title: 'Worker Spawned',
+            body: `${spawnLabel} started`,
+            type: 'info',
+          });
+        }
         break;
       }
 
@@ -351,6 +376,17 @@ class IpcServer {
           });
         }
 
+        // Toast notification for worker result
+        if (this.notificationManager) {
+          const resultSession = this.sessionManager.getSessionInfo(msg.sessionId);
+          const resultLabel = resultSession?.label || msg.sessionId;
+          this.notificationManager.notify({
+            title: 'Worker Complete',
+            body: `${resultLabel} finished: ${msg.status}`,
+            type: msg.status === 'success' ? 'success' : 'warning',
+          });
+        }
+
         // Check if all workers complete
         this.spawnedWorkers.add(msg.sessionId);
         const allSessions = this.sessionManager.listSessions();
@@ -406,28 +442,29 @@ class IpcServer {
       }
 
       case 'reset_session': {
-        // Save history, then kill and respawn the session
         this.historyManager.saveToFile(msg.sessionId, 'pre-reset');
         const sessionInfo = this.sessionManager.getSessionInfo(msg.sessionId);
+        if (this.notificationManager && sessionInfo) {
+          this.notificationManager.notify({
+            title: 'Session Reset',
+            body: `${sessionInfo.label || msg.sessionId} was reset`,
+            type: 'info',
+          });
+        }
         if (sessionInfo) {
-          // Build a summary prompt if requested
           let respawnPrompt = sessionInfo.initialPrompt || '';
           if (msg.preserveSummary && respawnPrompt) {
             respawnPrompt = `[RESET] Continuing previous task. Original prompt: ${respawnPrompt}`;
           }
-          // Kill the old session
-          this.sessionManager.closeSession(msg.sessionId);
-          // Respawn via the spawn request flow (creates new tab + session)
-          if (this.onSpawnRequest) {
-            this.onSpawnRequest({
-              cwd: sessionInfo.cwd,
-              initialPrompt: respawnPrompt,
-              label: sessionInfo.label + ' (reset)',
-              template: sessionInfo.template,
-              requestedBy: currentSessionId,
-            });
-          }
+          // Use respawnSession to reuse the same tab — do NOT create a new tab
+          this.sessionManager.respawnSession(msg.sessionId, {
+            label: sessionInfo.label,
+            cwd: sessionInfo.cwd,
+            initialPrompt: respawnPrompt,
+            template: sessionInfo.template,
+          });
         }
+        this._reply(socket, { type: 'session_reset', sessionId: msg.sessionId, requestId: msg.requestId });
         break;
       }
 
@@ -661,6 +698,14 @@ class IpcServer {
             message: msg.message,
             percent: msg.percent,
           });
+          // Also forward context estimate so the context bar stays fresh
+          const ctxEstimate = this.getContextEstimate(msg.sessionId);
+          if (ctxEstimate && ctxEstimate.estimated_context_percent != null) {
+            this.sessionManager.mainWindow.webContents.send('session:context-update', {
+              id: msg.sessionId,
+              percent: ctxEstimate.estimated_context_percent,
+            });
+          }
         }
         break;
       }
@@ -827,6 +872,28 @@ class IpcServer {
         break;
       }
 
+      // --- Session Cleanup ---
+      case 'close_session': {
+        this.sessionManager.closeSession(msg.sessionId);
+        this.sessionManager.mainWindow.webContents.send('session:force-close-tab', { id: msg.sessionId });
+        this._reply(socket, { type: 'session_closed', sessionId: msg.sessionId, requestId: msg.requestId });
+        break;
+      }
+
+      case 'close_all_done': {
+        const closed = [];
+        const sessions = this.sessionManager.listSessions();
+        for (const s of sessions) {
+          if (['done', 'failed', 'exited'].includes(s.status) && !s.isLead) {
+            this.sessionManager.closeSession(s.id);
+            this.sessionManager.mainWindow.webContents.send('session:force-close-tab', { id: s.id });
+            closed.push(s.id);
+          }
+        }
+        this._reply(socket, { type: 'close_all_done', closed, requestId: msg.requestId });
+        break;
+      }
+
       // --- Batch Scratchpad ---
       case 'batch_scratchpad': {
         const result = this.scratchpad.batchOps(msg.set, msg.get, msg.namespace);
@@ -932,6 +999,13 @@ class IpcServer {
       case 'context_estimate': {
         const estimate = this.getContextEstimate(msg.sessionId);
         this._reply(socket, { type: 'context_estimate', ...estimate, requestId: msg.requestId });
+        // Forward context percentage to renderer for status bar display
+        if (this.sessionManager.mainWindow && estimate.estimated_context_percent != null) {
+          this.sessionManager.mainWindow.webContents.send('session:context-update', {
+            id: currentSessionId,
+            percent: estimate.estimated_context_percent,
+          });
+        }
         break;
       }
 
@@ -1399,6 +1473,14 @@ class IpcServer {
       this._reconnectAttempts.delete(sessionId);
       // Update session status to disconnected
       this.sessionManager.updateStatus(sessionId, 'disconnected');
+      if (this.notificationManager) {
+        const failedSession = this.sessionManager.getSessionInfo(sessionId);
+        this.notificationManager.notify({
+          title: 'Worker Disconnected',
+          body: `${failedSession?.label || sessionId} failed after 3 retries`,
+          type: 'error',
+        });
+      }
       return;
     }
 

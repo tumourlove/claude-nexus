@@ -4,7 +4,7 @@ const os = require('os');
 
 class HistoryManager {
   constructor() {
-    this.historyDir = path.join(os.homedir(), '.claude-nexus', 'history');
+    this.historyDir = path.join(os.homedir(), '.claude-corroboree', 'history');
     fs.mkdirSync(this.historyDir, { recursive: true });
     this.buffers = new Map(); // sessionId -> string[]
     this.sessions = new Map(); // sessionId -> { output, startTime, label, template, isLead }

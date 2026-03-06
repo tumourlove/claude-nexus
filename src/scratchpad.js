@@ -5,7 +5,7 @@ const os = require('os');
 class Scratchpad {
   constructor() {
     this.data = new Map();
-    this.filePath = path.join(os.homedir(), '.claude-nexus', 'scratchpad.json');
+    this.filePath = path.join(os.homedir(), '.claude-corroboree', 'scratchpad.json');
     this._saveTimer = null;
     this._cleanupTimer = null;
     this._load();

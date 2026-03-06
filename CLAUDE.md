@@ -1,11 +1,11 @@
-# Claude Nexus
+# Claude Corroboree
 
 Tabbed Electron terminal app for running multiple Claude Code sessions in parallel with MCP-based coordination.
 
 ## Project Structure
 
 ```
-claude-nexus/
+claude-corroboree/
   main.js              # Electron main process — window, IPC handlers, orchestration
   preload.js           # Secure IPC bridge (contextIsolation)
   index.html           # App shell with tab bar, terminal container, status bar
@@ -59,6 +59,6 @@ claude-nexus/
 
 - **contextIsolation: true** — All renderer ↔ main communication goes through preload.js bridge
 - **esbuild bundling** — Renderer uses ES module imports, bundled to IIFE for browser context
-- **Named pipe IPC** — `\\.\pipe\claude-nexus-ipc` on Windows, Unix socket elsewhere
+- **Named pipe IPC** — `\\.\pipe\claude-corroboree-ipc` on Windows, Unix socket elsewhere
 - **Per-session MCP config** — Each session gets a temp JSON config file pointing to its MCP server instance
 - **@xterm/xterm v6** — Using the non-deprecated `@xterm/*` package namespace

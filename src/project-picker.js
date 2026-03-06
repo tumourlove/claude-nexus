@@ -9,7 +9,7 @@ export class ProjectPicker {
 
   _loadRecent() {
     try {
-      const data = localStorage.getItem('nexus-recent-projects');
+      const data = localStorage.getItem('corroboree-recent-projects');
       if (data) this.recentProjects = JSON.parse(data);
     } catch (e) {
       this.recentProjects = [];
@@ -17,7 +17,7 @@ export class ProjectPicker {
   }
 
   _saveRecent() {
-    localStorage.setItem('nexus-recent-projects', JSON.stringify(this.recentProjects.slice(0, 10)));
+    localStorage.setItem('corroboree-recent-projects', JSON.stringify(this.recentProjects.slice(0, 10)));
   }
 
   addRecent(projectPath) {
@@ -43,7 +43,8 @@ export class ProjectPicker {
       <div class="picker-overlay">
         <div class="picker-dialog">
           <div class="picker-header">
-            <h1>Claude Nexus</h1>
+            <h1>Claude Corroboree</h1>
+            <p class="picker-tagline">Gather. Coordinate. Create.</p>
             <p>Select a project to open</p>
           </div>
           <div class="picker-actions">

@@ -25,7 +25,24 @@
       "mcp__nexus-tab-1__list_worktrees",
       "mcp__nexus-tab-1__stream_progress",
       "mcp__nexus-tab-1__read_session_history",
-      "mcp__nexus-tab-1__merge_worker"
+      "mcp__nexus-tab-1__merge_worker",
+      "Bash(tasklist:*)",
+      "Bash(powershell:*)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(npx asar:*)",
+      "Read(//c/Users/lucas/AppData/Roaming/Claude Nexus/**)",
+      "Read(//c/Users/lucas/AppData/Local/Claude Nexus/**)",
+      "Read(//c/Users/lucas/.claude-nexus/configs/**)",
+      "Bash(wmic process:*)",
+      "Bash(NEXUS_SESSION_ID=test-probe NEXUS_IPC_PATH=\"//./pipe/claude-nexus-ipc\" timeout 5 node:*)",
+      "Bash(printf:*)",
+      "Read(//c/Users/lucas/AppData/Local/Programs/Claude Nexus/resources/**)",
+      "mcp__unreal-source__get_symbol_context",
+      "mcp__unreal-source__search_source",
+      "mcp__nexus-tab-1__spawn_workers",
+      "mcp__nexus-tab-1__reset_session",
+      "mcp__nexus-tab-1__send_message",
+      "mcp__nexus-tab-1__get_worker_diff"
     ]
   }
 }

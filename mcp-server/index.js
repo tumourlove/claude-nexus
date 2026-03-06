@@ -9,7 +9,7 @@ const { SessionRegistry } = require('./session-registry');
 const args = process.argv.slice(2);
 const sessionIdIdx = args.indexOf('--session-id');
 const SESSION_ID = sessionIdIdx !== -1 ? args[sessionIdIdx + 1] : 'unknown';
-const IPC_PATH = process.env.NEXUS_IPC_PATH || '\\\\.\\pipe\\claude-nexus-ipc';
+const IPC_PATH = process.env.NEXUS_IPC_PATH || '\\\\.\\pipe\\claude-corroboree-ipc';
 
 const SESSION_TEMPLATE = process.env.NEXUS_TEMPLATE || 'implementer';
 
@@ -28,6 +28,7 @@ const TEMPLATE_TOOLS = {
     'subscribe', 'unsubscribe', 'publish',
     'recall', 'get_lineage',
     'request_promotion', 'propose_task', 'list_proposals',
+    'close_session', 'close_all_done',
   ]),
   reviewer: new Set([
     'list_sessions', 'send_message', 'read_messages', 'report_result',
@@ -42,6 +43,7 @@ const TEMPLATE_TOOLS = {
     'subscribe', 'unsubscribe', 'publish',
     'remember', 'recall', 'get_lineage',
     'request_promotion', 'propose_task', 'list_proposals',
+    'close_session', 'close_all_done',
   ]),
   explorer: new Set([
     'list_sessions', 'read_messages', 'report_result',
@@ -54,6 +56,7 @@ const TEMPLATE_TOOLS = {
     'subscribe', 'unsubscribe',
     'recall', 'get_lineage',
     'request_promotion', 'propose_task', 'list_proposals',
+    'close_session', 'close_all_done',
   ]),
 };
 
@@ -1909,6 +1912,38 @@ server.tool(
         text += ` Created task #${response.taskId}.`;
       }
       return { content: [{ type: 'text', text }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// --- Session Cleanup Tools ---
+
+server.tool(
+  'close_session',
+  'Close a worker session tab. Use to clean up finished workers and reduce clutter.',
+  {
+    session_id: z.string().describe('Session ID to close (e.g. worker-5)'),
+  },
+  async ({ session_id }) => {
+    try {
+      await ipcRequest({ type: 'close_session', sessionId: session_id });
+      return { content: [{ type: 'text', text: JSON.stringify({ status: 'closed', session_id }) }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+server.tool(
+  'close_all_done',
+  'Close all worker sessions that have status done/failed/exited. Bulk cleanup.',
+  {},
+  async () => {
+    try {
+      const response = await ipcRequest({ type: 'close_all_done' });
+      return { content: [{ type: 'text', text: JSON.stringify({ closed: response.closed || [] }) }] };
     } catch (e) {
       return { content: [{ type: 'text', text: `Error: ${e.message}` }] };
     }

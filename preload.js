@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('nexus', {
   onSessionStatus: (callback) => ipcRenderer.on('session:status', (_e, data) => callback(data)),
   onSpawnRequested: (callback) => ipcRenderer.on('session:spawn-requested', (_e, data) => callback(data)),
   onSessionRelabeled: (callback) => ipcRenderer.on('session:relabeled', (_e, data) => callback(data)),
+  onForceCloseTab: (cb) => ipcRenderer.on('session:force-close-tab', (_e, data) => cb(data)),
   onToast: (callback) => ipcRenderer.on('notification:toast', (_e, data) => callback(data)),
   getSessionHistory: (id, lines) => ipcRenderer.invoke('session:history', { id, lines }),
   browseForFolder: () => ipcRenderer.invoke('dialog:open-folder'),
@@ -48,6 +49,7 @@ contextBridge.exposeInMainWorld('nexus', {
   onSessionHeartbeat: (cb) => ipcRenderer.on('session:heartbeat', (_e, data) => cb(data)),
   onTasksUpdated: (cb) => ipcRenderer.on('tasks:updated', (_e, data) => cb(data)),
   onSessionProgress: (cb) => ipcRenderer.on('session:progress', (_e, data) => cb(data)),
+  onContextUpdate: (cb) => ipcRenderer.on('session:context-update', (_e, data) => cb(data)),
   onChatMessage: (cb) => ipcRenderer.on('chat:message', (_e, data) => cb(data)),
 
   // Recipes

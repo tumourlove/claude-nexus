@@ -1,6 +1,35 @@
 export class ThemeManager {
   constructor() {
     this.themes = {
+      corroboree: {
+        '--bg-primary': '#1a1510',
+        '--bg-secondary': '#2a2218',
+        '--bg-tertiary': '#332b1e',
+        '--bg-deep': '#120e08',
+        '--text-primary': '#e8dcc8',
+        '--text-secondary': '#8a9178',
+        '--text-muted': '#5a5245',
+        '--text-link': '#5a9e8f',
+        '--accent': '#c17f3e',
+        '--accent-hover': '#d4943a',
+        '--accent-rgb': '193, 127, 62',
+        '--border': '#3a3028',
+        '--border-subtle': '#2a2218',
+        '--tab-bg': '#1a1510',
+        '--tab-hover-bg': '#332b1e',
+        '--tab-active-color': '#c17f3e',
+        '--scrollbar-thumb': '#c17f3e',
+        '--toast-bg': '#2a2218',
+        '--input-bg': '#1a1510',
+        '--card-bg': '#1a1510',
+        '--overlay-bg': 'rgba(18, 14, 8, 0.7)',
+        '--kbd-bg': '#1a1510',
+        '--kbd-border': '#3a3028',
+        '--success': '#6b9e5a',
+        '--warning': '#e6b422',
+        '--error': '#c45a3c',
+        '--info': '#5a9e8f',
+      },
       dark: {
         '--bg-primary': '#1a1a2e',
         '--bg-secondary': '#16213e',
@@ -89,8 +118,35 @@ export class ThemeManager {
         '--info': '#0969da',
       },
     };
-    this.themeOrder = ['dark', 'midnight', 'light'];
-    this.current = 'dark';
+    this.terminalThemes = {
+      corroboree: {
+        background: '#1a1510',
+        foreground: '#e8dcc8',
+        cursor: '#c17f3e',
+        selectionBackground: '#c17f3e40',
+      },
+      dark: {
+        background: '#1a1a2e',
+        foreground: '#e0e0e0',
+        cursor: '#e94560',
+        selectionBackground: '#e9456040',
+      },
+      midnight: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#58a6ff',
+        selectionBackground: '#58a6ff40',
+      },
+      light: {
+        background: '#ffffff',
+        foreground: '#1f2328',
+        cursor: '#0969da',
+        selectionBackground: '#0969da40',
+      },
+    };
+    this.themeOrder = ['corroboree', 'dark', 'midnight', 'light'];
+    this.current = 'corroboree';
+    this._changeCallbacks = [];
   }
 
   apply(themeName) {
@@ -103,6 +159,9 @@ export class ThemeManager {
     }
     root.dataset.theme = themeName;
     this.save();
+    for (const cb of this._changeCallbacks) {
+      cb(themeName, this.terminalThemes[themeName]);
+    }
   }
 
   cycle() {
@@ -112,16 +171,24 @@ export class ThemeManager {
     return next;
   }
 
+  onThemeChange(callback) {
+    this._changeCallbacks.push(callback);
+  }
+
+  getTerminalTheme() {
+    return this.terminalThemes[this.current] || this.terminalThemes.corroboree;
+  }
+
   save() {
-    localStorage.setItem('nexus-theme', this.current);
+    localStorage.setItem('corroboree-theme', this.current);
   }
 
   load() {
-    const saved = localStorage.getItem('nexus-theme');
+    const saved = localStorage.getItem('corroboree-theme');
     if (saved && this.themes[saved]) {
       this.apply(saved);
     } else {
-      this.apply('dark');
+      this.apply('corroboree');
     }
   }
 }

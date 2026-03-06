@@ -4,12 +4,19 @@ import { ProjectPicker } from './project-picker';
 import { ChatPanel } from './chat-panel';
 import { RecipeLoader } from './recipe-loader';
 import { CostTracker } from './cost-tracker';
+import { ThemeManager } from './theme-manager';
 
 const container = document.getElementById('terminal-container');
 const tabBar = document.getElementById('tab-bar');
 const tabManager = new TabManager(container, tabBar);
 const recipeLoader = new RecipeLoader();
 const costTracker = new CostTracker();
+const themeManager = new ThemeManager();
+// Initialize theme and wire up terminal theme updates
+themeManager.onThemeChange((themeName, termTheme) => {
+  tabManager.updateTerminalTheme(termTheme);
+});
+themeManager.load();
 
 // Chat panel
 const chatPanel = new ChatPanel();
@@ -97,6 +104,12 @@ document.addEventListener('keydown', (e) => {
     tabManager.activateTab(ids[next]);
   }
   // Ctrl+Shift+D toggle dashboard (Shift avoids Ctrl+D conflict with Claude Code EOF)
+  // Ctrl+Shift+T: reopen last closed tab
+  if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+    e.preventDefault();
+    tabManager.reopenLastTab();
+  }
+  // Ctrl+Shift+D toggle dashboard (Shift avoids Ctrl+D conflict with Claude Code EOF)
   if (e.ctrlKey && e.shiftKey && e.key === 'D') {
     e.preventDefault();
     const existing = [...tabManager.tabs.entries()].find(([, t]) => t.type === 'dashboard');
@@ -123,6 +136,11 @@ document.addEventListener('keydown', (e) => {
     const idx = parseInt(e.key) - 1;
     if (idx < ids.length) tabManager.activateTab(ids[idx]);
   }
+  // Ctrl+P: quick tab switcher
+  if (e.ctrlKey && e.key === 'p') {
+    e.preventDefault();
+    tabManager.showQuickSwitcher();
+  }
   // Ctrl+Shift+F: terminal search
   if (e.ctrlKey && e.shiftKey && e.key === 'F') {
     e.preventDefault();
@@ -142,6 +160,14 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && !e.shiftKey && e.key === '0') {
     e.preventDefault();
     tabManager.resetFontZoom();
+  }
+  // Ctrl+Shift+K: cycle theme
+  if (e.ctrlKey && e.shiftKey && e.key === 'K') {
+    e.preventDefault();
+    const next = themeManager.cycle();
+    const indicator = document.getElementById('theme-indicator');
+    if (indicator) indicator.textContent = next;
+    showToast(`Theme: ${next}`, 'info');
   }
   // F1 or ? toggle help (only if not typing in terminal)
   if (e.key === 'F1') {
@@ -192,6 +218,11 @@ function _updateBreathingEffect(id, status) {
 // Handle MCP-initiated session spawns
 window.nexus.onSpawnRequested(({ id, label, cwd, initialPrompt, template }) => {
   tabManager.createTab(label || 'Worker', { id, cwd, initialPrompt, template });
+});
+
+// Handle MCP-initiated tab close (close_session / close_all_done tools)
+window.nexus.onForceCloseTab(({ id }) => {
+  tabManager.closeTab(id);
 });
 
 // Handle tab relabeling when a session is reused
@@ -368,6 +399,93 @@ function _initCostIndicator() {
   });
 }
 _initCostIndicator();
+
+// --- Theme indicator in status bar ---
+function _initThemeIndicator() {
+  const statusBar = document.getElementById('status-bar');
+  if (!statusBar) return;
+  const themeEl = document.createElement('span');
+  themeEl.id = 'theme-indicator';
+  themeEl.className = 'theme-indicator';
+  themeEl.title = 'Click to cycle theme (Ctrl+Shift+K)';
+  themeEl.textContent = themeManager.current;
+  themeEl.style.cursor = 'pointer';
+  themeEl.addEventListener('click', () => {
+    const next = themeManager.cycle();
+    themeEl.textContent = next;
+    showToast(`Theme: ${next}`, 'info');
+  });
+  statusBar.insertBefore(themeEl, statusBar.firstChild);
+}
+_initThemeIndicator();
+
+// --- Context usage bar in status bar ---
+const _contextPercents = new Map();
+
+function _initContextBar() {
+  const statusBar = document.getElementById('status-bar');
+  if (!statusBar) return;
+  const ctxEl = document.createElement('span');
+  ctxEl.id = 'context-bar';
+  ctxEl.className = 'context-bar';
+  ctxEl.title = 'Context window usage';
+  ctxEl.innerHTML = '<span class="context-bar-label">Ctx: N/A</span><span class="context-bar-fill-wrap"><span class="context-bar-fill"></span></span>';
+  // Insert after cost indicator
+  const costEl = document.getElementById('cost-indicator');
+  if (costEl && costEl.nextSibling) {
+    statusBar.insertBefore(ctxEl, costEl.nextSibling);
+  } else {
+    statusBar.appendChild(ctxEl);
+  }
+
+  window.nexus.onContextUpdate(({ id, percent }) => {
+    _contextPercents.set(id, percent);
+    _updateContextBar();
+  });
+
+  // Update on tab switch
+  tabManager.onTabActivated = () => _updateContextBar();
+}
+
+function _updateContextBar() {
+  const ctxEl = document.getElementById('context-bar');
+  if (!ctxEl) return;
+  const label = ctxEl.querySelector('.context-bar-label');
+  const fill = ctxEl.querySelector('.context-bar-fill');
+
+  let percent;
+  const activeId = tabManager.activeTabId;
+  const activeTab = activeId && tabManager.tabs.get(activeId);
+
+  if (activeTab && (activeTab.type === 'dashboard' || activeTab.type === 'history')) {
+    // Show highest context % across all sessions
+    percent = _contextPercents.size > 0 ? Math.max(..._contextPercents.values()) : null;
+  } else if (activeId && _contextPercents.has(activeId)) {
+    percent = _contextPercents.get(activeId);
+  } else {
+    percent = null;
+  }
+
+  if (percent == null) {
+    label.textContent = 'Ctx: N/A';
+    fill.style.width = '0';
+    ctxEl.className = 'context-bar';
+    return;
+  }
+
+  const p = Math.round(percent);
+  label.textContent = `Ctx: ${p}%`;
+  fill.style.width = `${p}%`;
+
+  // Color class
+  let level = 'ctx-green';
+  if (p >= 90) level = 'ctx-red';
+  else if (p >= 75) level = 'ctx-orange';
+  else if (p >= 50) level = 'ctx-yellow';
+  ctxEl.className = `context-bar ${level}`;
+}
+
+_initContextBar();
 
 // --- Dashboard event-driven updates ---
 

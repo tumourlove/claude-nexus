@@ -6,7 +6,7 @@ class KnowledgeBase {
     this.maxEntries = 500;
     this.entries = new Map(); // id -> entry
     this.nextId = 1;
-    this.storePath = path.join(projectDir, '.claude-nexus', 'knowledge.json');
+    this.storePath = path.join(projectDir, '.claude-corroboree', 'knowledge.json');
     this._load();
   }
 

@@ -65,6 +65,7 @@ function createWindow() {
     historyManager,
     conflictDetector,
     taskQueue,
+    notificationManager,
     onSpawnRequest: ({ cwd, initialPrompt, label, template, requestedBy }) => {
       tabCounter++;
       const id = `worker-${tabCounter}`;
@@ -269,7 +270,7 @@ ipcMain.handle('app:load-recipes', async (_e, { projectPath }) => {
 ipcMain.handle('clipboard:save-image', async () => {
   const img = clipboard.readImage();
   if (img.isEmpty()) return null;
-  const tmpDir = path.join(os.tmpdir(), 'claude-nexus-images');
+  const tmpDir = path.join(os.tmpdir(), 'claude-corroboree-images');
   fs.mkdirSync(tmpDir, { recursive: true });
   const filePath = path.join(tmpDir, `paste-${Date.now()}.png`);
   fs.writeFileSync(filePath, img.toPNG());
@@ -303,7 +304,7 @@ function setupAutoUpdater() {
     dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Update Ready',
-      message: `Claude Nexus v${info.version} has been downloaded.`,
+      message: `Claude Corroboree v${info.version} has been downloaded.`,
       detail: 'Restart now to apply the update?',
       buttons: ['Restart Now', 'Later'],
       defaultId: 0,
@@ -330,7 +331,7 @@ ipcMain.handle('updater:get-version', () => app.getVersion());
 // Register shell integration on first launch of packaged build
 function registerShellIfNeeded() {
   if (!app.isPackaged) return;
-  const flagPath = path.join(os.homedir(), '.claude-nexus', 'shell-registered-version');
+  const flagPath = path.join(os.homedir(), '.claude-corroboree', 'shell-registered-version');
   const currentVersion = app.getVersion();
   try {
     const registered = fs.readFileSync(flagPath, 'utf8').trim();
@@ -360,7 +361,7 @@ app.whenReady().then(() => {
       const result = dialog.showMessageBoxSync({
         type: 'question',
         title: 'Recover Previous Sessions?',
-        message: `Nexus detected an unclean shutdown. ${recoverable.length} session(s) can be recovered.`,
+        message: `Corroboree detected an unclean shutdown. ${recoverable.length} session(s) can be recovered.`,
         detail: recoverable.map(s => `- ${s.label || s.id} (${s.template})`).join('\n'),
         buttons: ['Recover', 'Start Fresh'],
         defaultId: 0,
@@ -377,7 +378,10 @@ app.whenReady().then(() => {
   registerShellIfNeeded();
 });
 app.on('window-all-closed', () => {
-  if (checkpointManager) checkpointManager.destroy();
+  if (checkpointManager) {
+    checkpointManager.clearCheckpoints();
+    checkpointManager.destroy();
+  }
   if (ipcServer) ipcServer.stop();
   if (scratchpad) scratchpad.destroy();
   if (ipcServer && ipcServer.knowledgeBase) ipcServer.knowledgeBase.destroy();

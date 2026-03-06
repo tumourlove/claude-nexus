@@ -5,7 +5,7 @@ const crypto = require('crypto');
 
 class SessionMemory {
   constructor(dataDir) {
-    this.dataDir = dataDir || path.join(os.homedir(), '.claude-nexus', 'session-memory');
+    this.dataDir = dataDir || path.join(os.homedir(), '.claude-corroboree', 'session-memory');
     this.memories = new Map(); // projectHash -> { entries: [], projectPath }
     this.load();
   }

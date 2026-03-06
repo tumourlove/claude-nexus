@@ -4,8 +4,8 @@ const os = require('os');
 
 class CheckpointManager {
   constructor() {
-    this.checkpointDir = path.join(os.homedir(), '.claude-nexus', 'checkpoints');
-    this.pidFile = path.join(os.homedir(), '.claude-nexus', 'nexus.pid');
+    this.checkpointDir = path.join(os.homedir(), '.claude-corroboree', 'checkpoints');
+    this.pidFile = path.join(os.homedir(), '.claude-corroboree', 'nexus.pid');
     this.maxCheckpointsPerSession = 3;
     this._timer = null;
     fs.mkdirSync(this.checkpointDir, { recursive: true });

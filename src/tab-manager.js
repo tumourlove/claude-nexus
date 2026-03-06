@@ -13,6 +13,7 @@ export class TabManager {
     this.activeTabId = null;
     this.nextId = 1;
     this.unreadCounts = new Map(); // id -> number
+    this.closedTabs = []; // stack of recently closed tabs (max 10)
     this._contextMenu = null;
     this._setupContextMenuDismiss();
   }
@@ -64,10 +65,48 @@ export class TabManager {
         this.activateTab(id);
       }
     });
+    // Double-click to rename
+    tabEl.addEventListener('dblclick', (e) => {
+      if (e.target.classList.contains('tab-close')) return;
+      this._renameTab(id);
+    });
+    // Middle-click to close
+    tabEl.addEventListener('auxclick', (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        this.closeTab(id);
+      }
+    });
     // Context menu on right-click
     tabEl.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       this._showContextMenu(e, id);
+    });
+    // Drag-to-reorder
+    tabEl.draggable = true;
+    tabEl.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', id);
+      tabEl.classList.add('tab-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    tabEl.addEventListener('dragend', () => {
+      tabEl.classList.remove('tab-dragging');
+      this.tabBar.querySelectorAll('.tab-drop-target').forEach(el => el.classList.remove('tab-drop-target'));
+    });
+    tabEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      tabEl.classList.add('tab-drop-target');
+    });
+    tabEl.addEventListener('dragleave', () => {
+      tabEl.classList.remove('tab-drop-target');
+    });
+    tabEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      tabEl.classList.remove('tab-drop-target');
+      const draggedId = e.dataTransfer.getData('text/plain');
+      if (draggedId === id) return;
+      this._reorderTab(draggedId, id);
     });
     // Remove entrance animation class after it plays
     tabEl.addEventListener('animationend', () => {
@@ -96,16 +135,36 @@ export class TabManager {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: 'Cascadia Code, Consolas, monospace',
-      theme: {
-        background: '#1a1a2e',
-        foreground: '#e0e0e0',
-        cursor: '#e94560',
-        selectionBackground: '#e9456040',
+      theme: this._terminalTheme || {
+        background: '#1a1510',
+        foreground: '#e8dcc8',
+        cursor: '#c17f3e',
+        selectionBackground: '#c17f3e40',
       },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(termEl);
+
+    // Scroll-to-bottom floating button
+    const scrollBtn = document.createElement('button');
+    scrollBtn.className = 'scroll-to-bottom';
+    scrollBtn.innerHTML = '&#8595;'; // down arrow
+    scrollBtn.title = 'Scroll to bottom';
+    scrollBtn.style.display = 'none';
+    termEl.appendChild(scrollBtn);
+
+    scrollBtn.addEventListener('click', () => {
+      term.scrollToBottom();
+      scrollBtn.style.display = 'none';
+    });
+
+    // Show/hide based on scroll position
+    term.onScroll(() => {
+      const buffer = term.buffer.active;
+      const isAtBottom = buffer.viewportY >= buffer.baseY;
+      scrollBtn.style.display = isAtBottom ? 'none' : 'flex';
+    });
 
     // Custom key handling: clipboard, newlines, QoL
     term.attachCustomKeyEventHandler((e) => {
@@ -215,6 +274,8 @@ export class TabManager {
       tab.term.focus();
       window.nexus.resizeTerminal(id, tab.term.cols, tab.term.rows);
     }
+
+    if (this.onTabActivated) this.onTabActivated(id);
   }
 
   closeTab(id) {
@@ -223,6 +284,12 @@ export class TabManager {
 
     // Hide search bar if open
     if (tab.type === 'terminal') this._hideSearchBar(id);
+
+    // Save for reopen (terminal tabs only)
+    if (tab.type === 'terminal') {
+      this.closedTabs.push({ label: tab.label, type: tab.type });
+      if (this.closedTabs.length > 10) this.closedTabs.shift();
+    }
 
     // Animate tab exit then remove
     tab.tabEl.classList.add('tab-exit');
@@ -420,6 +487,25 @@ export class TabManager {
     }
   }
 
+  // --- Tab Drag Reorder ---
+  _reorderTab(draggedId, targetId) {
+    const draggedTab = this.tabs.get(draggedId);
+    const targetTab = this.tabs.get(targetId);
+    if (!draggedTab || !targetTab) return;
+
+    // Move DOM element
+    this.tabBar.insertBefore(draggedTab.tabEl, targetTab.tabEl);
+
+    // Rebuild Map to match new visual order
+    const entries = [];
+    const tabEls = this.tabBar.querySelectorAll('.tab[data-tab-id]');
+    for (const el of tabEls) {
+      const tid = el.dataset.tabId;
+      if (this.tabs.has(tid)) entries.push([tid, this.tabs.get(tid)]);
+    }
+    this.tabs = new Map(entries);
+  }
+
   // --- Feature 2: Tab Context Menu ---
   _setupContextMenuDismiss() {
     document.addEventListener('mousedown', (e) => {
@@ -502,6 +588,22 @@ export class TabManager {
     for (const id of ids) this.closeTab(id);
   }
 
+  // --- Terminal Theme Updates ---
+  updateTerminalTheme(theme) {
+    this._terminalTheme = theme;
+    for (const [, tab] of this.tabs) {
+      if (tab.type === 'terminal' && tab.term) {
+        tab.term.options.theme = theme;
+      }
+    }
+  }
+
+  reopenLastTab() {
+    const last = this.closedTabs.pop();
+    if (!last) return;
+    this.createTab(last.label + ' (reopened)');
+  }
+
   // --- Feature 5: Terminal Font Zoom ---
   zoomFont(delta) {
     const tab = this.tabs.get(this.activeTabId);
@@ -524,6 +626,61 @@ export class TabManager {
   // --- Session Recipes ---
   setRecipes(recipes) {
     this._recipes = recipes || [];
+  }
+
+  showQuickSwitcher() {
+    // Remove existing
+    const existing = document.querySelector('.quick-switcher');
+    if (existing) { existing.remove(); return; }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'quick-switcher';
+    overlay.innerHTML = `
+      <input type="text" class="qs-input" placeholder="Switch to tab..." spellcheck="false" />
+      <div class="qs-results"></div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('.qs-input');
+    const results = overlay.querySelector('.qs-results');
+    let selectedIdx = 0;
+
+    const render = (filter = '') => {
+      const items = [...this.tabs.entries()]
+        .map(([id, t]) => ({ id, label: t.label, type: t.type, status: t.tabEl?.querySelector('.tab-status')?.className || '' }))
+        .filter(item => !filter || item.label.toLowerCase().includes(filter.toLowerCase()) || item.id.toLowerCase().includes(filter.toLowerCase()));
+
+      selectedIdx = Math.min(selectedIdx, Math.max(0, items.length - 1));
+
+      results.innerHTML = items.map((item, i) => {
+        const active = item.id === this.activeTabId ? ' (active)' : '';
+        const statusDot = item.type === 'terminal' ? '<span class="qs-status-dot"></span>' : '';
+        return `<div class="qs-item${i === selectedIdx ? ' qs-selected' : ''}" data-id="${item.id}">${statusDot}<span class="qs-label">${item.label}${active}</span><span class="qs-id">${item.id}</span></div>`;
+      }).join('');
+
+      // Click handlers
+      results.querySelectorAll('.qs-item').forEach(el => {
+        el.addEventListener('click', () => {
+          this.activateTab(el.dataset.id);
+          overlay.remove();
+        });
+      });
+    };
+
+    input.addEventListener('input', () => { selectedIdx = 0; render(input.value); });
+    input.addEventListener('keydown', (e) => {
+      const items = results.querySelectorAll('.qs-item');
+      if (e.key === 'ArrowDown') { e.preventDefault(); selectedIdx = Math.min(selectedIdx + 1, items.length - 1); render(input.value); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); selectedIdx = Math.max(selectedIdx - 1, 0); render(input.value); }
+      if (e.key === 'Enter') { e.preventDefault(); const sel = items[selectedIdx]; if (sel) { this.activateTab(sel.dataset.id); overlay.remove(); } }
+      if (e.key === 'Escape') { overlay.remove(); }
+    });
+
+    // Close on outside click
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    render();
+    requestAnimationFrame(() => input.focus());
   }
 
   _spawnFromRecipe() {

@@ -2,7 +2,7 @@
 
 A tabbed Electron terminal for running multiple Claude Code sessions in parallel with full MCP-powered coordination.
 
-![Claude Nexus](https://img.shields.io/badge/version-0.4.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
+![Claude Nexus](https://img.shields.io/badge/version-0.4.1-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## What It Does
 
@@ -59,7 +59,20 @@ Each session has a role with enforced tool permissions and a distinct personalit
 
 Sessions can be promoted or demoted at runtime with `promote_session`/`demote_session`, and workers can request capability upgrades via `request_promotion`.
 
-### Visual & UX (v0.4.0)
+### Built-in Orchestration Skills
+Nexus ships with `.claude/skills/` that teach sessions how to coordinate effectively:
+
+| Skill | Purpose |
+|-------|---------|
+| **nexus-orchestration** | Lead session workflow — spawn workers, monitor, integrate results |
+| **nexus-planning** | Task decomposition, dependency mapping, and worker allocation |
+| **nexus-review** | Code review workflow for completed worker output |
+| **nexus-debugging** | Multi-session debugging strategies |
+| **nexus-cleanup** | Post-task cleanup of sessions, locks, worktrees, and state |
+| **nexus-handoff** | Context handoff when workers run out of context window |
+| **nexus-conflict-resolution** | Merge conflict resolution with integrator pattern |
+
+### Visual & UX
 - **Command palette** (Ctrl+Shift+P) — VS Code-style quick action search
 - **Theme system** — Dark, Midnight, and Light themes with instant switching
 - **Activity sparklines** — Dashboard cards show output velocity per session
@@ -69,7 +82,7 @@ Sessions can be promoted or demoted at runtime with `promote_session`/`demote_se
 - **Sound design** (Ctrl+Shift+M) — Optional audio feedback for spawn/complete/error events
 - **Toast notifications** — Pause-on-hover with history panel
 
-### Advanced Coordination (v0.4.0)
+### Advanced Coordination
 - **Structured messages** — Type/subject/data payloads for machine-readable inter-session communication
 - **Event pub/sub** — Subscribe to channels, receive push notifications across sessions
 - **Batch worker spawn** — `spawn_workers` creates multiple workers in one call
@@ -77,7 +90,7 @@ Sessions can be promoted or demoted at runtime with `promote_session`/`demote_se
 - **Consensus protocols** — Propose decisions, vote, resolve with quorum
 - **Merge conflict resolution** — Structured conflict data for automated resolution
 
-### Intelligence (v0.4.0)
+### Intelligence
 - **Task DAG** — Dependency-aware task graph with failure propagation and auto-unblock
 - **Session memory** — `remember`/`recall` persists learnings across session resets
 - **Knowledge graph** — Entities, relationships, traversal queries for project understanding
@@ -86,7 +99,7 @@ Sessions can be promoted or demoted at runtime with `promote_session`/`demote_se
 - **Emergent task discovery** — Workers propose new tasks bottom-up via `propose_task`
 - **Session recipes** — `.nexus-recipe.json` for predefined multi-session configurations
 
-### Reliability (v0.4.0)
+### Reliability
 - **Single-instance lock** — Prevents duplicate Nexus instances
 - **Startup self-check** — Validates claude/git CLI availability before launch
 - **Atomic scratchpad writes** — Prevents corruption on crash
@@ -96,14 +109,12 @@ Sessions can be promoted or demoted at runtime with `promote_session`/`demote_se
 - **Structured logging** — Consistent log format throughout codebase
 - **Cost & token tracking** — Parses Claude Code output for usage metrics
 - **ARIA accessibility** — Screen reader attributes throughout the UI
-
-### Reliability (v0.3.0)
 - **Session heartbeats** — 10s pings with health dashboard (green/yellow/red pulse)
 - **Auto-retry with backoff** — Failed workers retry up to 3x (2s, 8s, 30s delays)
 - **Auto-checkpointing** — Session state saved every 5 minutes, crash recovery dialog
 - **Template permissions** — Tool access enforced per role
 
-### Smart Coordination (v0.3.0)
+### Smart Coordination
 - **Structured task queue** — Priority-based tasks with dependencies and auto-assignment
 - **File locking** — `claim_file`/`release_file` prevents edit conflicts (10min auto-expiry)
 - **Shared code snippets** — Share file excerpts between sessions with auto-expiry
