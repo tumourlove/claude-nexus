@@ -46,6 +46,36 @@ claude-corroboree/
 - `npm run build` — Build distributable (electron-builder)
 - `npm run rebuild` — Rebuild native modules for Electron
 
+## Release Process (MANDATORY)
+
+User relies on auto-updater — EVERY release MUST include built assets.
+
+```bash
+# 1. Bump version
+#    Edit package.json version field
+
+# 2. Commit + tag + push
+git add -A && git commit -m "chore: bump version to X.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin master --tags
+
+# 3. Build installer (creates release/ dir with .exe + latest.yml)
+npm run build
+
+# 4. Create GitHub release WITH assets
+gh release create vX.Y.Z \
+  "release/Corroboree-Setup-X.Y.Z.exe" \
+  "release/Corroboree-Setup-X.Y.Z.exe.blockmap" \
+  "release/Corroboree X.Y.Z.exe" \
+  "release/latest.yml" \
+  --title "vX.Y.Z — Title" --notes "Release notes here"
+
+# 5. Verify assets uploaded
+gh release view vX.Y.Z --json assets --jq '.assets[].name'
+```
+
+Without `latest.yml` + `.exe` assets, electron-updater cannot detect updates. NEVER create a release without running `npm run build` and uploading the artifacts.
+
 ## Keyboard Shortcuts
 
 - `Ctrl+T` — New session tab
