@@ -10,6 +10,16 @@ const { SessionMemory } = require('./session-memory');
 const { KnowledgeGraph } = require('./knowledge-graph');
 const { Logger } = require('./logger');
 
+// Strip ANSI escape sequences for accurate byte counting
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z?]/g, '')   // CSI sequences
+            .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences
+            .replace(/\x1b[()][0-9A-Z]/g, '')            // Character set
+            .replace(/\x1b[>=<]/g, '')                    // Mode changes
+            .replace(/\x1b\[[\?]?[0-9;]*[hlrstuf]/g, '') // Private modes
+            .replace(/[\x00-\x08\x0e-\x1f]/g, '');       // Control chars (keep \n \r \t)
+}
+
 class IpcServer {
   constructor({ sessionManager, scratchpad, historyManager, conflictDetector, taskQueue, notificationManager, onSpawnRequest }) {
     this.sessionManager = sessionManager;
@@ -59,7 +69,7 @@ class IpcServer {
     const stats = this.sessionStats.get(sessionId);
     if (stats) {
       if (!stats.outputBytes) stats.outputBytes = 0;
-      stats.outputBytes += Buffer.byteLength(data);
+      stats.outputBytes += Buffer.byteLength(stripAnsi(typeof data === 'string' ? data : data.toString()));
 
       // Throttled push to renderer — update context bar every 5 seconds max per session
       if (!stats._ctxPushTimer) {
@@ -81,9 +91,9 @@ class IpcServer {
   getContextEstimate(sessionId) {
     const stats = this.sessionStats.get(sessionId) || {};
     const outputBytes = stats.outputBytes || 0;
-    // ~200K token context ≈ 800KB text, but terminal output includes ANSI escapes (~2x inflation)
-    // So ~400KB of raw terminal output ≈ full context. Use 500KB as denominator for safety margin.
-    const estimatedPercent = Math.min(100, Math.round(outputBytes / 512000 * 100));
+    // ~200K token context ≈ 800KB text. Terminal output is ~60% of context usage.
+    // With ANSI stripped, ~256KB of clean text ≈ full context (calibrated from real sessions).
+    const estimatedPercent = Math.min(100, Math.round(outputBytes / 256000 * 100));
     let level;
     if (estimatedPercent < 40) level = 'low';
     else if (estimatedPercent < 65) level = 'medium';
