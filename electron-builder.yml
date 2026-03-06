@@ -1,5 +1,5 @@
-appId: com.claude-nexus.app
-productName: Claude Nexus
+appId: com.claude-corroboree.app
+productName: Claude Corroboree
 directories:
   output: release
   buildResources: build
@@ -16,12 +16,12 @@ extraResources:
 publish:
   provider: github
   owner: tumourlove
-  repo: claude-nexus
+  repo: claude-corroboree
 win:
   target: [nsis, portable]
   signAndEditExecutable: false
 nsis:
-  artifactName: "Claude-Nexus-Setup-${version}.${ext}"
+  artifactName: "Claude-Corroboree-Setup-${version}.${ext}"
   oneClick: false
   perMachine: false
   allowElevation: false
