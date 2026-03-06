@@ -69,6 +69,7 @@ const TOOL_PACKS = {
     'get_session_status', 'session_info',
     'scratchpad_set', 'scratchpad_get', 'scratchpad_list', 'scratchpad_delete',
     'batch_scratchpad', 'scratchpad_cas',
+    'close_session', 'close_all_done', 'context_estimate',
   ],
   tasks: [
     'push_task', 'pull_task', 'update_task', 'list_tasks', 'get_task_graph',
