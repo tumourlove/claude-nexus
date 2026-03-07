@@ -46,6 +46,19 @@ class IpcServer {
     // Persistent session memory
     this.sessionMemory = new SessionMemory();
 
+    // Periodic context refresh for idle sessions (every 15s)
+    this._contextRefreshInterval = setInterval(() => {
+      for (const [sessionId] of this.sessionStats) {
+        const estimate = this.getContextEstimate(sessionId);
+        if (estimate && this.sessionManager.mainWindow) {
+          this.sessionManager.mainWindow.webContents.send('session:context-update', {
+            id: sessionId,
+            percent: estimate.estimated_context_percent,
+          });
+        }
+      }
+    }, 15000);
+
     // W10: Wire up conflict detector to publish file events
     if (this.conflictDetector) {
       this.conflictDetector.onEvent = (channel, data, sourceSessionId) => {
@@ -56,8 +69,11 @@ class IpcServer {
 
   // Track output and periodically push context estimate to renderer
   trackOutput(sessionId, _data) {
-    const stats = this.sessionStats.get(sessionId);
-    if (!stats) return;
+    let stats = this.sessionStats.get(sessionId);
+    if (!stats) {
+      this.sessionStats.set(sessionId, { connectedAt: Date.now(), messagesSent: 0, messagesReceived: 0, toolCalls: 0, _ctxPushTimer: null });
+      stats = this.sessionStats.get(sessionId);
+    }
 
     // Throttled push to renderer — update context bar every 5 seconds max per session
     if (!stats._ctxPushTimer) {
@@ -86,7 +102,7 @@ class IpcServer {
     try {
       // Read last ~8KB of the JSONL file to find the most recent usage entry
       const stat = fs.statSync(jsonlPath);
-      const readSize = Math.min(stat.size, 8192);
+      const readSize = Math.min(stat.size, 65536);
       const fd = fs.openSync(jsonlPath, 'r');
       const buf = Buffer.alloc(readSize);
       fs.readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
@@ -113,7 +129,8 @@ class IpcServer {
       const outputTokens = get('output_tokens');
 
       // Total tokens consumed in the context window
-      const totalTokens = inputTokens + cacheCreation + cacheRead + outputTokens;
+      // input_tokens already includes cache_read_input_tokens; output_tokens don't count toward context
+      const totalTokens = inputTokens + cacheCreation;
       const contextWindowSize = 200000; // Claude Opus/Sonnet context window
       const estimatedPercent = Math.min(100, Math.round(totalTokens / contextWindowSize * 100));
 
@@ -125,6 +142,7 @@ class IpcServer {
 
       return { estimated_context_percent: estimatedPercent, total_tokens: totalTokens, level };
     } catch (e) {
+      console.error('getContextEstimate error:', e.message);
       return { estimated_context_percent: 0, level: 'low' };
     }
   }
@@ -1618,6 +1636,11 @@ class IpcServer {
   }
 
   stop() {
+    // Clear periodic context refresh
+    if (this._contextRefreshInterval) {
+      clearInterval(this._contextRefreshInterval);
+      this._contextRefreshInterval = null;
+    }
     // Clear all context push timers
     for (const [, stats] of this.sessionStats) {
       if (stats._ctxPushTimer) {

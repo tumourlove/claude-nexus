@@ -188,6 +188,7 @@ ro.observe(container);
 // Handle session exit
 window.nexus.onSessionExited(({ id }) => {
   tabManager.updateTabStatus(id, 'exited');
+  _contextPercents.delete(id);
 });
 
 // Handle session status updates
@@ -222,6 +223,7 @@ window.nexus.onSpawnRequested(({ id, label, cwd, initialPrompt, template }) => {
 
 // Handle MCP-initiated tab close (close_session / close_all_done tools)
 window.nexus.onForceCloseTab(({ id }) => {
+  _contextPercents.delete(id);
   tabManager.closeTab(id);
 });
 

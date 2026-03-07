@@ -2,7 +2,7 @@
 
 A tabbed Electron terminal for running multiple Claude Code sessions in parallel with full MCP-powered coordination.
 
-![Claude Corroboree](https://img.shields.io/badge/version-0.5.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
+![Claude Corroboree](https://img.shields.io/badge/version-0.6.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## What It Does
 

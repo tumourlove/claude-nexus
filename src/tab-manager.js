@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Dashboard } from './dashboard';
 import { HistoryPanel } from './history-panel';
 
@@ -136,6 +137,8 @@ export class TabManager {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: 'Cascadia Code, Consolas, monospace',
+      scrollback: 10000,
+      smoothScrollDuration: 100,
       theme: this._terminalTheme || {
         background: '#1a1510',
         foreground: '#e8dcc8',
@@ -146,6 +149,11 @@ export class TabManager {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(termEl);
+    try {
+      term.loadAddon(new WebglAddon());
+    } catch (e) {
+      console.warn('WebGL addon failed, falling back to canvas:', e.message);
+    }
 
     // Scroll-to-bottom floating button
     const scrollBtn = document.createElement('button');
@@ -169,6 +177,15 @@ export class TabManager {
 
     // Custom key handling: clipboard, newlines, QoL
     term.attachCustomKeyEventHandler((e) => {
+      // Shift+Enter must block ALL event types (keydown, keypress, keyup)
+      // to prevent xterm from generating a regular \r after our kitty protocol sequence
+      if (e.shiftKey && e.key === 'Enter') {
+        if (e.type === 'keydown') {
+          window.nexus.terminalWrite(id, '\x1b[13;2u');
+        }
+        return false;
+      }
+
       if (e.type !== 'keydown') return true;
 
       // Ctrl+C: copy if selection exists, otherwise send SIGINT
@@ -220,11 +237,15 @@ export class TabManager {
         return false;
       }
 
-      // Shift+Enter: send newline to Claude Code (for multi-line input)
-      // Claude Code enables kitty keyboard protocol — Shift+Enter = ESC[13;2u
-      if (e.shiftKey && e.key === 'Enter') {
-        window.nexus.terminalWrite(id, '\x1b[13;2u');
-        return false;
+      // Clear selection visual on Backspace/Delete
+      if ((e.key === 'Backspace' || e.key === 'Delete') && term.hasSelection()) {
+        term.clearSelection();
+        // Don't return false — let the key pass through to the PTY normally
+      }
+
+      // Clear selection visual when typing printable characters
+      if (term.hasSelection() && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        term.clearSelection();
       }
 
       return true;

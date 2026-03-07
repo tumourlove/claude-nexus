@@ -9,6 +9,7 @@ claude-corroboree/
   main.js              # Electron main process — window, IPC handlers, orchestration
   preload.js           # Secure IPC bridge (contextIsolation)
   index.html           # App shell with tab bar, terminal container, status bar
+  electron-builder.yml # Build config for electron-builder (source of truth)
   src/
     renderer.js        # Renderer entry point — tab management, shortcuts, startup
     tab-manager.js     # Tab bar UI + xterm/dashboard/history tab types
@@ -22,9 +23,23 @@ claude-corroboree/
     dashboard.js       # Dashboard tab — session overview + activity log
     history-panel.js   # History tab — session logs grouped by date
     project-picker.js  # Startup project selector with recents
+    chat-panel.js      # Inter-session chat sidebar UI
+    checkpoint-manager.js # Session checkpoint/restore support
+    command-palette.js # Command palette UI
+    consensus-manager.js # Multi-session consensus/voting mechanism
+    cost-tracker.js    # Token usage + cost estimation from session output
+    event-bus.js       # Cross-module event pub/sub
+    knowledge-base.js  # Shared knowledge store across sessions
+    knowledge-graph.js # Knowledge relationship graph
+    logger.js          # Structured logging utility
+    recipe-loader.js   # Project recipe/template loading
+    review-manager.js  # Code review coordination across sessions
+    session-memory.js  # Per-session persistent memory
+    task-queue.js      # Task queue for work distribution
+    theme-manager.js   # Terminal theme cycling + persistence
     styles.css         # All app styling
   mcp-server/
-    index.js           # MCP server entry point (stdio transport, 16 tools)
+    index.js           # MCP server entry point (stdio transport, ~80 tools across 9 toolpacks)
     message-bus.js     # Inter-session message routing
     session-registry.js # Session metadata tracking
   scripts/
@@ -80,10 +95,19 @@ Without `latest.yml` + `.exe` assets, electron-updater cannot detect updates. NE
 
 - `Ctrl+T` — New session tab
 - `Ctrl+W` — Close current tab
+- `Ctrl+Shift+T` — Reopen last closed tab
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` — Cycle tabs
 - `Ctrl+1-9` — Jump to tab by number
+- `Ctrl+P` — Quick tab switcher
 - `Ctrl+Shift+D` — Toggle dashboard
 - `Ctrl+Shift+H` — Toggle history panel
+- `Ctrl+Shift+C` — Toggle chat panel
+- `Ctrl+Shift+F` — Terminal search
+- `Ctrl+=` / `Ctrl++` — Zoom in
+- `Ctrl+-` — Zoom out
+- `Ctrl+0` — Reset zoom
+- `Ctrl+Shift+K` — Cycle theme
+- `F1` — Toggle help
 
 ## Key Design Decisions
 
@@ -92,3 +116,4 @@ Without `latest.yml` + `.exe` assets, electron-updater cannot detect updates. NE
 - **Named pipe IPC** — `\\.\pipe\claude-corroboree-ipc` on Windows, Unix socket elsewhere
 - **Per-session MCP config** — Each session gets a temp JSON config file pointing to its MCP server instance
 - **@xterm/xterm v6** — Using the non-deprecated `@xterm/*` package namespace
+- **electron-builder.yml** — Source of truth for build config (not package.json build section)

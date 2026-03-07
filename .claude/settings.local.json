@@ -42,7 +42,19 @@
       "mcp__nexus-tab-1__spawn_workers",
       "mcp__nexus-tab-1__reset_session",
       "mcp__nexus-tab-1__send_message",
-      "mcp__nexus-tab-1__get_worker_diff"
+      "mcp__nexus-tab-1__get_worker_diff",
+      "mcp__nexus-tab-1__list_toolpacks",
+      "mcp__nexus-tab-1__load_toolpack",
+      "mcp__nexus-tab-1__unload_toolpack",
+      "mcp__nexus-tab-1__get_session_status",
+      "Bash(grep \"\"version\"\":*)",
+      "mcp__nexus-tab-1__close_session",
+      "Read(//c/Users/lucas/AppData/Local/Programs/corroboree/**)",
+      "Read(//c/Users/lucas/AppData/Local/Programs/Corroboree/**)",
+      "Read(//c/Users/lucas/AppData/Local/**)",
+      "Read(//c/Users/lucas/AppData/Local/Programs/**)",
+      "mcp__nexus-tab-1__close_all_done",
+      "Bash(python:*)"
     ]
   }
 }

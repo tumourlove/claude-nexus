@@ -1,7 +1,7 @@
 {
   "name": "claude-corroboree",
   "productName": "Claude Corroboree",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Tabbed Electron terminal for parallel Claude Code sessions with MCP coordination",
   "main": "main.js",
   "scripts": {
